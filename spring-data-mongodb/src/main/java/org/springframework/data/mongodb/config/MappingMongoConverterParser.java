@@ -30,8 +30,12 @@ import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinitionHolder;
 import org.springframework.beans.factory.config.RuntimeBeanReference;
-import org.springframework.beans.factory.parsing.BeanComponentDefinition;
-import org.springframework.beans.factory.support.*;
+import org.springframework.beans.factory.support.AbstractBeanDefinition;
+import org.springframework.beans.factory.support.BeanDefinitionBuilder;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
+import org.springframework.beans.factory.support.ManagedList;
+import org.springframework.beans.factory.support.ManagedSet;
 import org.springframework.beans.factory.xml.AbstractBeanDefinitionParser;
 import org.springframework.beans.factory.xml.ParserContext;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
@@ -48,23 +52,18 @@ import org.springframework.data.mongodb.core.convert.MappingMongoConverter;
 import org.springframework.data.mongodb.core.index.MongoPersistentEntityIndexCreator;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.MongoMappingContext;
-import org.springframework.data.mongodb.core.mapping.event.ValidatingMongoEventListener;
-import org.springframework.scheduling.config.AnnotationDrivenBeanDefinitionParser;
 import org.springframework.util.Assert;
-import org.springframework.util.ClassUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.util.xml.DomUtils;
-import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 import org.w3c.dom.Element;
 
 /**
  * @author Jon Brisbin <jbrisbin@vmware.com>
  * @author Oliver Gierke
- * @author Maciej Walkowiak <walkowiak.maciej@yahoo.com>
  */
 public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
+
 	private static final String BASE_PACKAGE = "base-package";
-	private static final boolean jsr303Present = ClassUtils.isPresent("javax.validation.Validator", AnnotationDrivenBeanDefinitionParser.class.getClassLoader());
 
 	@Override
 	protected String resolveId(Element element, AbstractBeanDefinition definition, ParserContext parserContext)
@@ -118,32 +117,35 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 	}
 
 	private BeanDefinition potentiallyCreateValidatingMongoEventListener(Element element, ParserContext parserContext) {
+
 		String disableValidation = element.getAttribute("disable-validation");
+		boolean validationDisabled = StringUtils.hasText(disableValidation) && Boolean.valueOf(disableValidation);
 
-		BeanDefinition result = null;
+		if (!validationDisabled) {
 
-		if (disableValidation == null || Boolean.valueOf(disableValidation) == Boolean.FALSE) {
 			BeanDefinitionBuilder builder = BeanDefinitionBuilder.genericBeanDefinition();
-
 			RuntimeBeanReference validator = getValidator(builder, parserContext);
 
 			if (validator != null) {
+
 				builder.getRawBeanDefinition().setBeanClass(ValidatingMongoEventListener.class);
 				builder.addConstructorArgValue(validator);
 
-				result = builder.getBeanDefinition();
+				return builder.getBeanDefinition();
 			}
 		}
 
-		return result;
+		return null;
 	}
 
 	private RuntimeBeanReference getValidator(Object source, ParserContext parserContext) {
+
 		if (!jsr303Present) {
 			return null;
 		}
 
-		RootBeanDefinition validatorDef = new RootBeanDefinition(LocalValidatorFactoryBean.class);
+		RootBeanDefinition validatorDef = new RootBeanDefinition(
+				"org.springframework.validation.beanvalidation.LocalValidatorFactoryBean");
 		validatorDef.setSource(source);
 		validatorDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
 		String validatorName = parserContext.getReaderContext().registerWithGeneratedName(validatorDef);
@@ -263,7 +265,7 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 
 	/**
 	 * {@link TypeFilter} that returns {@literal false} in case any of the given delegates matches.
-	 *
+	 * 
 	 * @author Oliver Gierke
 	 */
 	private static class NegatingFilter implements TypeFilter {
@@ -272,7 +274,7 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 
 		/**
 		 * Creates a new {@link NegatingFilter} with the given delegates.
-		 *
+		 * 
 		 * @param filters
 		 */
 		public NegatingFilter(TypeFilter... filters) {

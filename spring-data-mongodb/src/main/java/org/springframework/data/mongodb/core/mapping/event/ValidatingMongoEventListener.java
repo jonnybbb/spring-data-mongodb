@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 the original author or authors.
+ * Copyright 2012 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,40 +15,54 @@
  */
 package org.springframework.data.mongodb.core.mapping.event;
 
-import com.mongodb.DBObject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.validation.ConstraintViolation;
-import javax.validation.ConstraintViolationException;
-import javax.validation.Validator;
 import java.util.Set;
 
+import javax.validation.ConstraintViolationException;
+import javax.validation.Validator;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.util.Assert;
+
+import com.mongodb.DBObject;
+
 /**
- * javax.validation dependant entities validator.
- * When it is registered as Spring component its automatically invoked before entities are saved in database.
- *
- * @author Maciej Walkowiak <walkowiak.maciej@yahoo.com>
+ * javax.validation dependant entities validator. When it is registered as Spring component its automatically invoked
+ * before entities are saved in database.
+ * 
+ * @author Maciej Walkowiak
  */
-public class ValidatingMongoEventListener extends AbstractMongoEventListener {
+public class ValidatingMongoEventListener extends AbstractMongoEventListener<Object> {
+
 	private static final Logger LOG = LoggerFactory.getLogger(ValidatingMongoEventListener.class);
 
 	private final Validator validator;
 
+	/**
+	 * Creates a new {@link ValidatingMongoEventListener} using the given {@link Validator}.
+	 * 
+	 * @param validator must not be {@literal null}.
+	 */
 	public ValidatingMongoEventListener(Validator validator) {
+		Assert.notNull(validator);
 		this.validator = validator;
 	}
 
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.core.mapping.event.AbstractMongoEventListener#onBeforeSave(java.lang.Object, com.mongodb.DBObject)
+	 */
 	@Override
+	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public void onBeforeSave(Object source, DBObject dbo) {
-		LOG.debug("Validating object: {}", source);
 
+		LOG.debug("Validating object: {}", source);
 		Set violations = validator.validate(source);
 
-		if (violations.size() > 0) {
-			LOG.info("During object: {} validation violations found: {}", source, violations);
+		if (!violations.isEmpty()) {
 
-			throw new ConstraintViolationException((Set<ConstraintViolation<?>>) violations);
+			LOG.info("During object: {} validation violations found: {}", source, violations);
+			throw new ConstraintViolationException(violations);
 		}
 	}
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 the original author or authors.
+ * Copyright 2012 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,9 @@
  */
 package org.springframework.data.mongodb.config;
 
+import static org.hamcrest.Matchers.*;
+import static org.junit.Assert.*;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
@@ -23,18 +26,18 @@ import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.beans.factory.xml.XmlBeanDefinitionReader;
 import org.springframework.core.io.ClassPathResource;
 
-import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.assertThat;
-
 /**
- * Integration test for creation of instance of {@link org.springframework.data.mongodb.core.mapping.event.ValidatingMongoEventListener}
- * by defining <code>&lt;mongo:mapping-converter /&gt;</code> in context XML
- *
- * @author Maciej Walkowiak <walkowiak.maciej@yahoo.com>
+ * Integration test for creation of instance of
+ * {@link org.springframework.data.mongodb.core.mapping.event.ValidatingMongoEventListener} by defining
+ * {@code <mongo:mapping-converter />} in context XML.
+ * 
+ * @see DATAMONGO-36
+ * @author Maciej Walkowiak
  */
 public class MappingMongoConverterParserValidationIntegrationTests {
-	private DefaultListableBeanFactory factory;
-	private BeanDefinitionReader reader;
+
+	DefaultListableBeanFactory factory;
+	BeanDefinitionReader reader;
 
 	@Before
 	public void setUp() {
@@ -44,22 +47,22 @@ public class MappingMongoConverterParserValidationIntegrationTests {
 
 	@Test
 	public void validatingEventListenerCreatedWithDefaultConfig() {
-		reader.loadBeanDefinitions(new ClassPathResource("namespace/converter-default.xml"));
 
+		reader.loadBeanDefinitions(new ClassPathResource("namespace/converter-default.xml"));
 		assertThat(factory.getBean(BeanNames.VALIDATING_EVENT_LISTENER), is(not(nullValue())));
 	}
 
 	@Test
 	public void validatingEventListenerCreatedWhenValidationEnabled() {
-		reader.loadBeanDefinitions(new ClassPathResource("namespace/converter-validation-enabled.xml"));
 
+		reader.loadBeanDefinitions(new ClassPathResource("namespace/converter-validation-enabled.xml"));
 		assertThat(factory.getBean(BeanNames.VALIDATING_EVENT_LISTENER), is(not(nullValue())));
 	}
 
 	@Test(expected = NoSuchBeanDefinitionException.class)
 	public void validatingEventListenersIsNotCreatedWhenDisabled() {
-		reader.loadBeanDefinitions(new ClassPathResource("namespace/converter-validation-disabled.xml"));
 
+		reader.loadBeanDefinitions(new ClassPathResource("namespace/converter-validation-disabled.xml"));
 		factory.getBean(BeanNames.VALIDATING_EVENT_LISTENER);
 	}
 }
