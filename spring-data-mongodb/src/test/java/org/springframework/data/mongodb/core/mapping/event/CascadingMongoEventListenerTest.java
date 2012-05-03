@@ -17,6 +17,8 @@ import static org.junit.Assert.fail;
 /**
  * Integration tests for testing cascade operations on fields annotated with {@link org.springframework.data.mongodb.core.mapping.DBRef}
  * Contains two unit tests: save and delete for each option in {@link org.springframework.data.mongodb.core.mapping.CascadeType} enumeration
+ *
+ * @author Maciej Walkowiak
  */
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration

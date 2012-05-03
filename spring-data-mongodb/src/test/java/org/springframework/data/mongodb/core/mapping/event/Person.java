@@ -9,6 +9,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 /**
  * Used in {@link CascadingMongoEventListenerTest}.
  * Each field with {@link Address} type represents association with different cascade operation.
+ *
+ * @author Maciej Walkowiak
  */
 @Document
 public class Person {
