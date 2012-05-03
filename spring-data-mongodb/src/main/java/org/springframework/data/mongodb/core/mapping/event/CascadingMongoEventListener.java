@@ -1,5 +1,7 @@
 package org.springframework.data.mongodb.core.mapping.event;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.data.mapping.Association;
@@ -13,7 +15,14 @@ import org.springframework.data.mongodb.core.mapping.DBRef;
 import org.springframework.data.mongodb.core.mapping.MongoPersistentEntity;
 import org.springframework.data.mongodb.core.mapping.MongoPersistentProperty;
 
+/**
+ * Performs cascade operations on child objects annotated with {@link DBRef}
+ *
+ * @author Maciej Walkowiak
+ */
 public class CascadingMongoEventListener extends AbstractMongoEventListener {
+	private static final Logger LOG = LoggerFactory.getLogger(CascadingMongoEventListener.class);
+
 	@Autowired
 	private MappingContext<? extends MongoPersistentEntity<?>, MongoPersistentProperty> mappingContext;
 
@@ -23,15 +32,27 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 	@Autowired
 	private MongoOperations mongoOperations;
 
+	/**
+	 * Executes {@link CascadeSaveAssociationHandler} on each property annotated with {@link DBRef}
+	 * with cascadeType delete
+	 *
+	 * @param source object that is going to be converted
+	 */
 	@Override
 	public void onBeforeConvert(final Object source) {
-		System.out.println("OnBeforeConvert = " + source);
+		LOG.debug("before convert: {}", source);
 
 		final MongoPersistentEntity<?> persistentEntity = mappingContext.getPersistentEntity(source.getClass());
 
 		persistentEntity.doWithAssociations(new CascadeSaveAssociationHandler(source));
 	}
 
+	/**
+	 * Executes {@link CascadeDeleteAssociationHandler} on each property annotated with {@link DBRef}
+	 * with cascadeType save
+	 *
+	 * @param source object that has just been deleted
+	 */
 	@Override
 	public void onAfterDelete(Object source) {
 		final MongoPersistentEntity<?> persistentEntity = mappingContext.getPersistentEntity(source.getClass());
@@ -39,6 +60,9 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 		persistentEntity.doWithAssociations(new CascadeDeleteAssociationHandler(source));
 	}
 
+	/**
+	 * Executes {@link MongoOperations#save(Object)} on referred objects
+	 */
 	private class CascadeSaveAssociationHandler extends AbstractCascadeAssociationHandler {
 		private CascadeSaveAssociationHandler(Object source) {
 			super(source);
@@ -50,9 +74,7 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 		}
 
 		@Override
-		void handle(MongoPersistentProperty mongoPersistentProperty) {
-			Object referencedObject = getReferencesObject(mongoPersistentProperty);
-
+		void handle(Object referencedObject) {
 			final MongoPersistentEntity<?> referencedObjectEntity = mappingContext.getPersistentEntity(referencedObject.getClass());
 
 			if (referencedObjectEntity.getIdProperty() == null) {
@@ -63,6 +85,9 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 		}
 	}
 
+	/**
+	 * Executes {@link MongoOperations#remove(Object)} on referred objects
+	 */
 	private class CascadeDeleteAssociationHandler extends AbstractCascadeAssociationHandler {
 		public CascadeDeleteAssociationHandler(Object source) {
 			super(source);
@@ -74,8 +99,8 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 		}
 
 		@Override
-		void handle(MongoPersistentProperty mongoPersistentProperty) {
-			mongoOperations.remove(getReferencesObject(mongoPersistentProperty));
+		void handle(Object referredObject) {
+			mongoOperations.remove(referredObject);
 		}
 	}
 
@@ -93,12 +118,16 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 				DBRef dbRef = persistentProperty.getDBRef();
 
 				if (isAppliable(dbRef)) {
-					handle(persistentProperty);
+					Object referencedObject = getReferredObject(persistentProperty);
+
+					if (referencedObject != null) {
+						handle(referencedObject);
+					}
 				}
 			}
 		}
 
-		protected Object getReferencesObject(MongoPersistentProperty mongoPersistentProperty) {
+		private Object getReferredObject(MongoPersistentProperty mongoPersistentProperty) {
 			ConversionService service = mongoConverter.getConversionService();
 
 			return BeanWrapper.create(source, service).getProperty(mongoPersistentProperty, Object.class, true);
@@ -106,6 +135,6 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 
 		abstract boolean isAppliable(DBRef dbRef);
 
-		abstract void handle(MongoPersistentProperty mongoPersistentProperty);
+		abstract void handle(Object referencedObject);
 	}
 }

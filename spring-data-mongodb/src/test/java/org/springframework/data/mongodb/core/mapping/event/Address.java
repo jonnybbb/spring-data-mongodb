@@ -8,15 +8,6 @@ import org.springframework.data.mongodb.core.mapping.Document;
 public class Address {
 	@Id
 	private ObjectId id;
-	private String city;
-
-	public Address(String city) {
-		this.city = city;
-	}
-
-	public String getCity() {
-		return city;
-	}
 
 	@Override
 	public boolean equals(Object o) {
@@ -25,7 +16,6 @@ public class Address {
 
 		Address address = (Address) o;
 
-		if (!city.equals(address.city)) return false;
 		if (id != null ? !id.equals(address.id) : address.id != null) return false;
 
 		return true;
@@ -33,8 +23,6 @@ public class Address {
 
 	@Override
 	public int hashCode() {
-		int result = id != null ? id.hashCode() : 0;
-		result = 31 * result + city.hashCode();
-		return result;
+		return id != null ? id.hashCode() : 0;
 	}
 }
