@@ -39,8 +39,7 @@ import com.mongodb.MongoURI;
 @RunWith(MockitoJUnitRunner.class)
 public class SimpleMongoDbFactoryUnitTests {
 
-	@Mock
-	Mongo mongo;
+	@Mock Mongo mongo;
 
 	/**
 	 * @see DATADOC-254
@@ -66,6 +65,7 @@ public class SimpleMongoDbFactoryUnitTests {
 	 * @throws UnknownHostException
 	 */
 	@Test
+	@SuppressWarnings("deprecation")
 	public void mongoUriConstructor() throws UnknownHostException {
 
 		MongoURI mongoURI = new MongoURI("mongodb://myUsername:myPassword@localhost/myDatabase.myCollection");
@@ -75,6 +75,16 @@ public class SimpleMongoDbFactoryUnitTests {
 				"myUsername", "myPassword")));
 		assertThat(ReflectionTestUtils.getField(mongoDbFactory, "databaseName").toString(), is("myDatabase"));
 		assertThat(ReflectionTestUtils.getField(mongoDbFactory, "databaseName").toString(), is("myDatabase"));
+	}
+
+	/**
+	 * @see DATAMONGO-789
+	 */
+	@Test
+	public void defaultsAuthenticationDatabaseToDatabase() {
+
+		SimpleMongoDbFactory factory = new SimpleMongoDbFactory(mongo, "foo");
+		assertThat(ReflectionTestUtils.getField(factory, "authenticationDatabaseName"), is((Object) "foo"));
 	}
 
 	private void rejectsDatabaseName(String databaseName) {

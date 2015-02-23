@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,24 +17,33 @@ package org.springframework.data.mongodb.core.convert;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.net.MalformedURLException;
+import java.net.URL;
 
 import org.bson.types.ObjectId;
+import org.springframework.core.convert.ConversionFailedException;
+import org.springframework.core.convert.TypeDescriptor;
 import org.springframework.core.convert.converter.Converter;
+import org.springframework.data.convert.ReadingConverter;
+import org.springframework.data.convert.WritingConverter;
+import org.springframework.data.mongodb.core.query.Term;
 import org.springframework.util.StringUtils;
+
+import com.mongodb.DBObject;
 
 /**
  * Wrapper class to contain useful converters for the usage with Mongo.
  * 
  * @author Oliver Gierke
+ * @author Thomas Darimont
+ * @author Christoph Strobl
  */
 abstract class MongoConverters {
 
 	/**
 	 * Private constructor to prevent instantiation.
 	 */
-	private MongoConverters() {
-
-	}
+	private MongoConverters() {}
 
 	/**
 	 * Simple singleton to convert {@link ObjectId}s to their {@link String} representation.
@@ -117,6 +126,56 @@ abstract class MongoConverters {
 
 		public BigInteger convert(String source) {
 			return StringUtils.hasText(source) ? new BigInteger(source) : null;
+		}
+	}
+
+	public static enum URLToStringConverter implements Converter<URL, String> {
+		INSTANCE;
+
+		public String convert(URL source) {
+			return source == null ? null : source.toString();
+		}
+	}
+
+	public static enum StringToURLConverter implements Converter<String, URL> {
+		INSTANCE;
+
+		private static final TypeDescriptor SOURCE = TypeDescriptor.valueOf(String.class);
+		private static final TypeDescriptor TARGET = TypeDescriptor.valueOf(URL.class);
+
+		public URL convert(String source) {
+
+			try {
+				return source == null ? null : new URL(source);
+			} catch (MalformedURLException e) {
+				throw new ConversionFailedException(SOURCE, TARGET, source, e);
+			}
+		}
+	}
+
+	@ReadingConverter
+	public static enum DBObjectToStringConverter implements Converter<DBObject, String> {
+
+		INSTANCE;
+
+		@Override
+		public String convert(DBObject source) {
+			return source == null ? null : source.toString();
+		}
+	}
+
+	/**
+	 * @author Christoph Strobl
+	 * @since 1.6
+	 */
+	@WritingConverter
+	public static enum TermToStringConverter implements Converter<Term, String> {
+
+		INSTANCE;
+
+		@Override
+		public String convert(Term source) {
+			return source == null ? null : source.getFormatted();
 		}
 	}
 }

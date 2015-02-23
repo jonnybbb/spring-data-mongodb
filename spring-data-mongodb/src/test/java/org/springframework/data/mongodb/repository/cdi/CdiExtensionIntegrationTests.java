@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 the original author or authors.
+ * Copyright 2012-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import static org.junit.Assert.*;
 
 import org.apache.webbeans.cditest.CdiTestContainer;
 import org.apache.webbeans.cditest.CdiTestContainerLoader;
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.springframework.data.mongodb.repository.Person;
@@ -28,6 +29,7 @@ import org.springframework.data.mongodb.repository.Person;
  * Integration tests for {@link MongoRepositoryExtension}.
  * 
  * @author Oliver Gierke
+ * @author Mark Paluch
  */
 public class CdiExtensionIntegrationTests {
 
@@ -39,11 +41,16 @@ public class CdiExtensionIntegrationTests {
 		container.bootContainer();
 	}
 
+	@AfterClass
+	public static void tearDown() throws Exception {
+		container.shutdownContainer();
+	}
+
 	@Test
 	public void bootstrapsRepositoryCorrectly() {
 
 		RepositoryClient client = container.getInstance(RepositoryClient.class);
-		PersonRepository repository = client.getRepository();
+		CdiPersonRepository repository = client.getRepository();
 
 		assertThat(repository, is(notNullValue()));
 
@@ -55,4 +62,15 @@ public class CdiExtensionIntegrationTests {
 		assertThat(result, is(notNullValue()));
 		assertThat(repository.findOne(person.getId()).getId(), is(result.getId()));
 	}
+
+	/**
+	 * @see DATAMONGO-1017
+	 */
+	@Test
+	public void returnOneFromCustomImpl() {
+
+		RepositoryClient repositoryConsumer = container.getInstance(RepositoryClient.class);
+		assertThat(repositoryConsumer.getSamplePersonRepository().returnOne(), is(1));
+	}
+
 }

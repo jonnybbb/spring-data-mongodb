@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2013 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,14 @@
 package org.springframework.data.mongodb.config;
 
 import java.beans.PropertyEditorSupport;
+import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.HashSet;
+import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
 import com.mongodb.ServerAddress;
@@ -27,8 +33,16 @@ import com.mongodb.ServerAddress;
  * 
  * @author Mark Pollack
  * @author Oliver Gierke
+ * @author Thomas Darimont
  */
 public class ServerAddressPropertyEditor extends PropertyEditorSupport {
+
+	/**
+	 * A port is a number without a leading 0 at the end of the address that is proceeded by just a single :.
+	 */
+	private static final String HOST_PORT_SPLIT_PATTERN = "(?<!:):(?=[123456789]\\d*$)";
+	private static final String COULD_NOT_PARSE_ADDRESS_MESSAGE = "Could not parse address {} '{}'. Check your replica set configuration!";
+	private static final Logger LOG = LoggerFactory.getLogger(ServerAddressPropertyEditor.class);
 
 	/*
 	 * (non-Javadoc)
@@ -37,22 +51,86 @@ public class ServerAddressPropertyEditor extends PropertyEditorSupport {
 	@Override
 	public void setAsText(String replicaSetString) {
 
+		if (!StringUtils.hasText(replicaSetString)) {
+			setValue(null);
+			return;
+		}
+
 		String[] replicaSetStringArray = StringUtils.commaDelimitedListToStringArray(replicaSetString);
-		ServerAddress[] serverAddresses = new ServerAddress[replicaSetStringArray.length];
+		Set<ServerAddress> serverAddresses = new HashSet<ServerAddress>(replicaSetStringArray.length);
 
-		for (int i = 0; i < replicaSetStringArray.length; i++) {
+		for (String element : replicaSetStringArray) {
 
-			String[] hostAndPort = StringUtils.delimitedListToStringArray(replicaSetStringArray[i], ":");
+			ServerAddress address = parseServerAddress(element);
 
-			try {
-				serverAddresses[i] = new ServerAddress(hostAndPort[0], Integer.parseInt(hostAndPort[1]));
-			} catch (NumberFormatException e) {
-				throw new IllegalArgumentException("Could not parse port " + hostAndPort[1], e);
-			} catch (UnknownHostException e) {
-				throw new IllegalArgumentException("Could not parse host " + hostAndPort[0], e);
+			if (address != null) {
+				serverAddresses.add(address);
 			}
 		}
 
-		setValue(serverAddresses);
+		if (serverAddresses.isEmpty()) {
+			throw new IllegalArgumentException(
+					"Could not resolve at least one server of the replica set configuration! Validate your config!");
+		}
+
+		setValue(serverAddresses.toArray(new ServerAddress[serverAddresses.size()]));
+	}
+
+	/**
+	 * Parses the given source into a {@link ServerAddress}.
+	 * 
+	 * @param source
+	 * @return the
+	 */
+	private ServerAddress parseServerAddress(String source) {
+
+		if (!StringUtils.hasText(source)) {
+			LOG.warn(COULD_NOT_PARSE_ADDRESS_MESSAGE, "source", source);
+			return null;
+		}
+
+		String[] hostAndPort = extractHostAddressAndPort(source.trim());
+
+		if (hostAndPort.length > 2) {
+			LOG.warn(COULD_NOT_PARSE_ADDRESS_MESSAGE, "source", source);
+			return null;
+		}
+
+		try {
+			InetAddress hostAddress = InetAddress.getByName(hostAndPort[0]);
+			Integer port = hostAndPort.length == 1 ? null : Integer.parseInt(hostAndPort[1]);
+
+			return port == null ? new ServerAddress(hostAddress) : new ServerAddress(hostAddress, port);
+		} catch (UnknownHostException e) {
+			LOG.warn(COULD_NOT_PARSE_ADDRESS_MESSAGE, "host", hostAndPort[0]);
+		} catch (NumberFormatException e) {
+			LOG.warn(COULD_NOT_PARSE_ADDRESS_MESSAGE, "port", hostAndPort[1]);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Extract the host and port from the given {@link String}.
+	 * 
+	 * @param addressAndPortSource must not be {@literal null}.
+	 * @return
+	 */
+	private String[] extractHostAddressAndPort(String addressAndPortSource) {
+
+		Assert.notNull(addressAndPortSource, "Address and port source must not be null!");
+
+		String[] hostAndPort = addressAndPortSource.split(HOST_PORT_SPLIT_PATTERN);
+		String hostAddress = hostAndPort[0];
+
+		if (isHostAddressInIPv6BracketNotation(hostAddress)) {
+			hostAndPort[0] = hostAddress.substring(1, hostAddress.length() - 1);
+		}
+
+		return hostAndPort;
+	}
+
+	private boolean isHostAddressInIPv6BracketNotation(String hostAddress) {
+		return hostAddress.startsWith("[") && hostAddress.endsWith("]");
 	}
 }

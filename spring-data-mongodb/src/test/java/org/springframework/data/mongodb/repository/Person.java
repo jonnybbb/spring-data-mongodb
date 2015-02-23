@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2011 the original author or authors.
+ * Copyright 2010-2013 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,19 +15,23 @@
  */
 package org.springframework.data.mongodb.repository;
 
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Set;
 
-import org.springframework.data.mongodb.core.geo.Point;
+import org.springframework.data.geo.Point;
 import org.springframework.data.mongodb.core.index.GeoSpatialIndexed;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.DBRef;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 
 /**
  * Sample domain class.
  * 
  * @author Oliver Gierke
+ * @author Thomas Darimont
  */
 @Document
 public class Person extends Contact {
@@ -38,21 +42,27 @@ public class Person extends Contact {
 
 	private String firstname;
 	private String lastname;
-	@Indexed(unique = true, dropDups = true)
-	private String email;
+	@Indexed(unique = true, dropDups = true) private String email;
 	private Integer age;
-	@SuppressWarnings("unused")
-	private Sex sex;
+	@SuppressWarnings("unused") private Sex sex;
 	Date createdAt;
 
-	@GeoSpatialIndexed
-	private Point location;
+	List<String> skills;
 
-	private Address address;
+	@GeoSpatialIndexed private Point location;
+
+	private @Field("add") Address address;
 	private Set<Address> shippingAddresses;
 
-	@DBRef
-	User creator;
+	@DBRef User creator;
+
+	@DBRef(lazy = true) User coworker;
+
+	@DBRef(lazy = true) List<User> fans;
+
+	@DBRef(lazy = true) ArrayList<User> realFans;
+
+	Credentials credentials;
 
 	public Person() {
 
@@ -191,6 +201,48 @@ public class Person extends Contact {
 		return String.format("%s %s", firstname, lastname);
 	}
 
+	/**
+	 * @return the fans
+	 */
+	public List<User> getFans() {
+		return fans;
+	}
+
+	/**
+	 * @param fans the fans to set
+	 */
+	public void setFans(List<User> fans) {
+		this.fans = fans;
+	}
+
+	/**
+	 * @return the realFans
+	 */
+	public ArrayList<User> getRealFans() {
+		return realFans;
+	}
+
+	/**
+	 * @param realFans the realFans to set
+	 */
+	public void setRealFans(ArrayList<User> realFans) {
+		this.realFans = realFans;
+	}
+
+	/**
+	 * @return the coworker
+	 */
+	public User getCoworker() {
+		return coworker;
+	}
+
+	/**
+	 * @param coworker the coworker to set
+	 */
+	public void setCoworker(User coworker) {
+		this.coworker = coworker;
+	}
+
 	/*
 	* (non-Javadoc)
 	*
@@ -210,6 +262,24 @@ public class Person extends Contact {
 		Person that = (Person) obj;
 
 		return this.getId().equals(that.getId());
+	}
+
+	public Person withAddress(Address address) {
+
+		this.address = address;
+		return this;
+	}
+
+	public void setCreator(User creator) {
+		this.creator = creator;
+	}
+
+	public void setSkills(List<String> skills) {
+		this.skills = skills;
+	}
+
+	public List<String> getSkills() {
+		return skills;
 	}
 
 	/*

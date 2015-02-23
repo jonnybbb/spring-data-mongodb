@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2011 the original author or authors.
+ * Copyright 2010-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 package org.springframework.data.mongodb.core.query;
 
+import static org.springframework.util.ObjectUtils.*;
+
 import com.mongodb.BasicDBObject;
 import com.mongodb.DBObject;
 import com.mongodb.util.JSON;
@@ -24,11 +26,13 @@ import com.mongodb.util.JSON;
  * 
  * @author Thomas Risberg
  * @author Oliver Gierke
+ * @author Christoph Strobl
+ * @author Thomas Darimont
  */
 public class BasicQuery extends Query {
 
 	private final DBObject queryObject;
-	private final DBObject fieldsObject;
+	private DBObject fieldsObject;
 	private DBObject sortObject;
 
 	public BasicQuery(String query) {
@@ -49,8 +53,12 @@ public class BasicQuery extends Query {
 		this.fieldsObject = fieldsObject;
 	}
 
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.core.query.Query#addCriteria(org.springframework.data.mongodb.core.query.CriteriaDefinition)
+	 */
 	@Override
-	public Query addCriteria(Criteria criteria) {
+	public Query addCriteria(CriteriaDefinition criteria) {
 		this.queryObject.putAll(criteria.getCriteriaObject());
 		return this;
 	}
@@ -83,5 +91,51 @@ public class BasicQuery extends Query {
 
 	public void setSortObject(DBObject sortObject) {
 		this.sortObject = sortObject;
+	}
+
+	/**
+	 * @since 1.6
+	 * @param fieldsObject
+	 */
+	protected void setFieldsObject(DBObject fieldsObject) {
+		this.fieldsObject = fieldsObject;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.core.query.Query#equals(java.lang.Object)
+	 */
+	@Override
+	public boolean equals(Object o) {
+
+		if (this == o) {
+			return true;
+		}
+
+		if (!(o instanceof BasicQuery)) {
+			return false;
+		}
+
+		BasicQuery that = (BasicQuery) o;
+
+		return querySettingsEquals(that) && //
+				nullSafeEquals(fieldsObject, that.fieldsObject) && //
+				nullSafeEquals(queryObject, that.queryObject) && //
+				nullSafeEquals(sortObject, that.sortObject);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.core.query.Query#hashCode()
+	 */
+	@Override
+	public int hashCode() {
+
+		int result = super.hashCode();
+		result = 31 * result + nullSafeHashCode(queryObject);
+		result = 31 * result + nullSafeHashCode(fieldsObject);
+		result = 31 * result + nullSafeHashCode(sortObject);
+
+		return result;
 	}
 }

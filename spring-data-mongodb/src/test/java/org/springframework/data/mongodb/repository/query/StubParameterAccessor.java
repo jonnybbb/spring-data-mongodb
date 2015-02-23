@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,10 @@ import java.util.Iterator;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.geo.Distance;
+import org.springframework.data.geo.Point;
 import org.springframework.data.mongodb.core.convert.MongoWriter;
-import org.springframework.data.mongodb.core.geo.Distance;
-import org.springframework.data.mongodb.core.geo.Point;
+import org.springframework.data.mongodb.core.query.TextCriteria;
 import org.springframework.data.repository.query.ParameterAccessor;
 
 /**
@@ -33,6 +34,7 @@ import org.springframework.data.repository.query.ParameterAccessor;
 class StubParameterAccessor implements MongoParameterAccessor {
 
 	private final Object[] values;
+	private Distance distance;
 
 	/**
 	 * Creates a new {@link ConvertingParameterAccessor} backed by a {@link StubParameterAccessor} simply returning the
@@ -47,7 +49,14 @@ class StubParameterAccessor implements MongoParameterAccessor {
 	}
 
 	public StubParameterAccessor(Object... values) {
+
 		this.values = values;
+
+		for (Object value : values) {
+			if (value instanceof Distance) {
+				this.distance = (Distance) value;
+			}
+		}
 	}
 
 	/*
@@ -87,7 +96,7 @@ class StubParameterAccessor implements MongoParameterAccessor {
 	 * @see org.springframework.data.mongodb.repository.MongoParameterAccessor#getMaxDistance()
 	 */
 	public Distance getMaxDistance() {
-		return null;
+		return distance;
 	}
 
 	/*
@@ -103,6 +112,15 @@ class StubParameterAccessor implements MongoParameterAccessor {
 	 * @see org.springframework.data.mongodb.repository.MongoParameterAccessor#getGeoNearLocation()
 	 */
 	public Point getGeoNearLocation() {
+		return null;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.repository.query.MongoParameterAccessor#getFullText()
+	 */
+	@Override
+	public TextCriteria getFullText() {
 		return null;
 	}
 }

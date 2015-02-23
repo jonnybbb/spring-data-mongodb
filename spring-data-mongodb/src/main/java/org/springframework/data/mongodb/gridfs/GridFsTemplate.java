@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,6 +42,9 @@ import com.mongodb.gridfs.GridFSInputFile;
  * {@link GridFsOperations} implementation to store content into MongoDB GridFS.
  * 
  * @author Oliver Gierke
+ * @author Philipp Schneider
+ * @author Thomas Darimont
+ * @author Martin Baumgartner
  */
 public class GridFsTemplate implements GridFsOperations, ResourcePatternResolver {
 
@@ -89,13 +92,53 @@ public class GridFsTemplate implements GridFsOperations, ResourcePatternResolver
 
 	/*
 	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#store(java.io.InputStream, java.lang.Object)
+	 */
+
+	@Override
+	public GridFSFile store(InputStream content, Object metadata) {
+		return store(content, null, metadata);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#store(java.io.InputStream, com.mongodb.DBObject)
+	 */
+	@Override
+	public GridFSFile store(InputStream content, DBObject metadata) {
+		return store(content, null, metadata);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#store(java.io.InputStream, java.lang.String, java.lang.String)
+	 */
+	public GridFSFile store(InputStream content, String filename, String contentType) {
+		return store(content, filename, contentType, (Object) null);
+	}
+
+	/*
+	 * (non-Javadoc)
 	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#store(java.io.InputStream, java.lang.String, java.lang.Object)
 	 */
 	public GridFSFile store(InputStream content, String filename, Object metadata) {
+		return store(content, filename, null, metadata);
+	}
 
-		DBObject dbObject = new BasicDBObject();
-		converter.write(metadata, dbObject);
-		return store(content, filename, dbObject);
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#store(java.io.InputStream, java.lang.String, java.lang.String, java.lang.Object)
+	 */
+	public GridFSFile store(InputStream content, String filename, String contentType, Object metadata) {
+
+		DBObject dbObject = null;
+
+		if (metadata != null) {
+			dbObject = new BasicDBObject();
+			converter.write(metadata, dbObject);
+		}
+
+		return store(content, filename, contentType, dbObject);
 	}
 
 	/*
@@ -103,16 +146,32 @@ public class GridFsTemplate implements GridFsOperations, ResourcePatternResolver
 	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#store(java.io.InputStream, java.lang.String, com.mongodb.DBObject)
 	 */
 	public GridFSFile store(InputStream content, String filename, DBObject metadata) {
+		return this.store(content, filename, null, metadata);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#store(java.io.InputStream, java.lang.String, com.mongodb.DBObject)
+	 */
+	public GridFSFile store(InputStream content, String filename, String contentType, DBObject metadata) {
 
 		Assert.notNull(content);
-		Assert.hasText(filename);
-		Assert.notNull(metadata);
 
 		GridFSInputFile file = getGridFs().createFile(content);
-		file.setFilename(filename);
-		file.setMetaData(metadata);
-		file.save();
 
+		if (filename != null) {
+			file.setFilename(filename);
+		}
+
+		if (metadata != null) {
+			file.setMetaData(metadata);
+		}
+
+		if (contentType != null) {
+			file.setContentType(contentType);
+		}
+
+		file.save();
 		return file;
 	}
 
@@ -121,7 +180,15 @@ public class GridFsTemplate implements GridFsOperations, ResourcePatternResolver
 	 * @see org.springframework.data.mongodb.gridfs.GridFsOperations#find(com.mongodb.DBObject)
 	 */
 	public List<GridFSDBFile> find(Query query) {
-		return getGridFs().find(getMappedQuery(query));
+
+		if (query == null) {
+			return getGridFs().find((DBObject) null);
+		}
+
+		DBObject queryObject = getMappedQuery(query.getQueryObject());
+		DBObject sortObject = getMappedQuery(query.getSortObject());
+
+		return getGridFs().find(queryObject, sortObject);
 	}
 
 	/*
@@ -153,7 +220,9 @@ public class GridFsTemplate implements GridFsOperations, ResourcePatternResolver
 	 * @see org.springframework.core.io.ResourceLoader#getResource(java.lang.String)
 	 */
 	public GridFsResource getResource(String location) {
-		return new GridFsResource(findOne(query(whereFilename().is(location))));
+
+		GridFSDBFile file = findOne(query(whereFilename().is(location)));
+		return file != null ? new GridFsResource(file) : null;
 	}
 
 	/*
@@ -184,7 +253,11 @@ public class GridFsTemplate implements GridFsOperations, ResourcePatternResolver
 	}
 
 	private DBObject getMappedQuery(Query query) {
-		return query == null ? null : queryMapper.getMappedObject(query.getQueryObject(), null);
+		return query == null ? new Query().getQueryObject() : getMappedQuery(query.getQueryObject());
+	}
+
+	private DBObject getMappedQuery(DBObject query) {
+		return query == null ? null : queryMapper.getMappedObject(query, null);
 	}
 
 	private GridFS getGridFs() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 by the original author(s).
+ * Copyright 2011-2014 by the original author(s).
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,27 +15,29 @@
  */
 package org.springframework.data.mongodb.core.mapping;
 
-import static org.mockito.Mockito.*;
 import static org.hamcrest.CoreMatchers.*;
 import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
 import org.springframework.context.ApplicationContext;
+import org.springframework.data.mapping.model.MappingException;
 import org.springframework.data.util.ClassTypeInformation;
 
 /**
  * Unit tests for {@link BasicMongoPersistentEntity}.
  * 
  * @author Oliver Gierke
+ * @author Christoph Strobl
  */
 @RunWith(MockitoJUnitRunner.class)
 public class BasicMongoPersistentEntityUnitTests {
 
-	@Mock
-	ApplicationContext context;
+	@Mock ApplicationContext context;
+	@Mock MongoPersistentProperty propertyMock;
 
 	@Test
 	public void subclassInheritsAtDocumentAnnotation() {
@@ -53,6 +55,9 @@ public class BasicMongoPersistentEntityUnitTests {
 		assertThat(entity.getCollection(), is("35"));
 	}
 
+	/**
+	 * @see DATAMONGO-65, DATAMONGO-1108
+	 */
 	@Test
 	public void collectionAllowsReferencingSpringBean() {
 
@@ -67,6 +72,75 @@ public class BasicMongoPersistentEntityUnitTests {
 		entity.setApplicationContext(context);
 
 		assertThat(entity.getCollection(), is("reference"));
+
+		provider.collectionName = "otherReference";
+		assertThat(entity.getCollection(), is("otherReference"));
+	}
+
+	/**
+	 * @see DATAMONGO-937
+	 */
+	@Test
+	public void shouldDetectLanguageCorrectly() {
+
+		BasicMongoPersistentEntity<DocumentWithLanguage> entity = new BasicMongoPersistentEntity<DocumentWithLanguage>(
+				ClassTypeInformation.from(DocumentWithLanguage.class));
+		assertThat(entity.getLanguage(), is("spanish"));
+	}
+
+	/**
+	 * @see DATAMONGO-1053
+	 */
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	@Test(expected = MappingException.class)
+	public void verifyShouldThrowExceptionForInvalidTypeOfExplicitLanguageProperty() {
+
+		BasicMongoPersistentEntity<AnyDocument> entity = new BasicMongoPersistentEntity<AnyDocument>(
+				ClassTypeInformation.from(AnyDocument.class));
+
+		when(propertyMock.isExplicitLanguageProperty()).thenReturn(true);
+		when(propertyMock.getActualType()).thenReturn((Class) Number.class);
+
+		entity.addPersistentProperty(propertyMock);
+		entity.verify();
+	}
+
+	/**
+	 * @see DATAMONGO-1053
+	 */
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	@Test
+	public void verifyShouldPassForStringAsExplicitLanguageProperty() {
+
+		BasicMongoPersistentEntity<AnyDocument> entity = new BasicMongoPersistentEntity<AnyDocument>(
+				ClassTypeInformation.from(AnyDocument.class));
+		when(propertyMock.isExplicitLanguageProperty()).thenReturn(true);
+		when(propertyMock.getActualType()).thenReturn((Class) String.class);
+		entity.addPersistentProperty(propertyMock);
+
+		entity.verify();
+
+		verify(propertyMock, times(1)).isExplicitLanguageProperty();
+		verify(propertyMock, times(1)).getActualType();
+	}
+
+	/**
+	 * @see DATAMONGO-1053
+	 */
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	@Test
+	public void verifyShouldIgnoreNonExplicitLanguageProperty() {
+
+		BasicMongoPersistentEntity<AnyDocument> entity = new BasicMongoPersistentEntity<AnyDocument>(
+				ClassTypeInformation.from(AnyDocument.class));
+		when(propertyMock.isExplicitLanguageProperty()).thenReturn(false);
+		when(propertyMock.getActualType()).thenReturn((Class) Number.class);
+		entity.addPersistentProperty(propertyMock);
+
+		entity.verify();
+
+		verify(propertyMock, times(1)).isExplicitLanguageProperty();
+		verify(propertyMock, never()).getActualType();
 	}
 
 	@Document(collection = "contacts")
@@ -94,5 +168,14 @@ public class BasicMongoPersistentEntityUnitTests {
 		public String getCollectionName() {
 			return collectionName;
 		}
+	}
+
+	@Document(language = "spanish")
+	static class DocumentWithLanguage {
+
+	}
+
+	static class AnyDocument {
+
 	}
 }

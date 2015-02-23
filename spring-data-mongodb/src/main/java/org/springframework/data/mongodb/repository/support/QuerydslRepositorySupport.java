@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2012 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,16 +15,12 @@
  */
 package org.springframework.data.mongodb.repository.support;
 
-import org.apache.commons.collections15.Transformer;
 import org.springframework.data.mapping.context.MappingContext;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.core.mapping.MongoPersistentEntity;
 import org.springframework.util.Assert;
 
-import com.mongodb.DBCollection;
-import com.mongodb.DBObject;
 import com.mysema.query.mongodb.MongodbQuery;
-import com.mysema.query.mongodb.MongodbSerializer;
 import com.mysema.query.types.EntityPath;
 
 /**
@@ -36,7 +32,6 @@ public abstract class QuerydslRepositorySupport {
 
 	private final MongoOperations template;
 	private final MappingContext<? extends MongoPersistentEntity<?>, ?> context;
-	private final MongodbSerializer serializer;
 
 	/**
 	 * Creates a new {@link QuerydslRepositorySupport} for the given {@link MongoOperations}.
@@ -44,10 +39,11 @@ public abstract class QuerydslRepositorySupport {
 	 * @param operations must not be {@literal null}
 	 */
 	public QuerydslRepositorySupport(MongoOperations operations) {
+
 		Assert.notNull(operations);
+
 		this.template = operations;
 		this.context = operations.getConverter().getMappingContext();
-		this.serializer = new MongodbSerializer();
 	}
 
 	/**
@@ -75,11 +71,6 @@ public abstract class QuerydslRepositorySupport {
 		Assert.notNull(path);
 		Assert.hasText(collection);
 
-		DBCollection dbCollection = template.getCollection(collection);
-		return new MongodbQuery<T>(dbCollection, new Transformer<DBObject, T>() {
-			public T transform(DBObject input) {
-				return template.getConverter().read(path.getType(), input);
-			}
-		}, serializer);
+		return new SpringDataMongodbQuery<T>(template, path.getType(), collection);
 	}
 }

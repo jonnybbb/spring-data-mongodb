@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +24,13 @@ import java.util.List;
 import java.util.Set;
 
 import org.springframework.beans.BeanMetadataElement;
-import org.springframework.beans.factory.BeanDefinitionStoreException;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinitionHolder;
 import org.springframework.beans.factory.config.RuntimeBeanReference;
 import org.springframework.beans.factory.parsing.BeanComponentDefinition;
+import org.springframework.beans.factory.parsing.CompositeComponentDefinition;
+import org.springframework.beans.factory.parsing.ReaderContext;
 import org.springframework.beans.factory.support.AbstractBeanDefinition;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
@@ -38,6 +39,7 @@ import org.springframework.beans.factory.support.ManagedList;
 import org.springframework.beans.factory.support.ManagedSet;
 import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.beans.factory.xml.AbstractBeanDefinitionParser;
+import org.springframework.beans.factory.xml.BeanDefinitionParser;
 import org.springframework.beans.factory.xml.ParserContext;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.core.convert.converter.Converter;
@@ -48,6 +50,9 @@ import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.core.type.filter.AssignableTypeFilter;
 import org.springframework.core.type.filter.TypeFilter;
 import org.springframework.data.annotation.Persistent;
+import org.springframework.data.config.BeanComponentDefinitionBuilder;
+import org.springframework.data.mapping.context.MappingContextIsNewStrategyFactory;
+import org.springframework.data.mapping.model.CamelCaseAbbreviatingFieldNamingStrategy;
 import org.springframework.data.mongodb.core.convert.CustomConversions;
 import org.springframework.data.mongodb.core.convert.MappingMongoConverter;
 import org.springframework.data.mongodb.core.index.MongoPersistentEntityIndexCreator;
@@ -66,31 +71,39 @@ import org.w3c.dom.Element;
  * @author Jon Brisbin
  * @author Oliver Gierke
  * @author Maciej Walkowiak
+ * @author Thomas Darimont
+ * @author Christoph Strobl
  */
-public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
+public class MappingMongoConverterParser implements BeanDefinitionParser {
 
 	private static final String BASE_PACKAGE = "base-package";
-	private static final boolean jsr303Present = ClassUtils.isPresent("javax.validation.Validator",
+	private static final boolean JSR_303_PRESENT = ClassUtils.isPresent("javax.validation.Validator",
 			MappingMongoConverterParser.class.getClassLoader());
 
-	@Override
-	protected String resolveId(Element element, AbstractBeanDefinition definition, ParserContext parserContext)
-			throws BeanDefinitionStoreException {
-		String id = super.resolveId(element, definition, parserContext);
-		return StringUtils.hasText(id) ? id : "mappingConverter";
-	}
+	/* (non-Javadoc)
+	 * @see org.springframework.beans.factory.xml.BeanDefinitionParser#parse(org.w3c.dom.Element, org.springframework.beans.factory.xml.ParserContext)
+	 */
+	public BeanDefinition parse(Element element, ParserContext parserContext) {
 
-	@Override
-	protected AbstractBeanDefinition parseInternal(Element element, ParserContext parserContext) {
+		if (parserContext.isNested()) {
+			parserContext.getReaderContext().error("Mongo Converter must not be defined as nested bean.", element);
+		}
+
 		BeanDefinitionRegistry registry = parserContext.getRegistry();
+		String id = element.getAttribute(AbstractBeanDefinitionParser.ID_ATTRIBUTE);
+		id = StringUtils.hasText(id) ? id : DEFAULT_CONVERTER_BEAN_NAME;
+
+		parserContext.pushContainingComponent(new CompositeComponentDefinition("Mapping Mongo Converter", element));
 
 		BeanDefinition conversionsDefinition = getCustomConversions(element, parserContext);
-		String ctxRef = potentiallyCreateMappingContext(element, parserContext, conversionsDefinition);
+		String ctxRef = potentiallyCreateMappingContext(element, parserContext, conversionsDefinition, id);
+
+		createIsNewStrategyFactoryBeanDefinition(ctxRef, parserContext, element);
 
 		// Need a reference to a Mongo instance
 		String dbFactoryRef = element.getAttribute("db-factory-ref");
 		if (!StringUtils.hasText(dbFactoryRef)) {
-			dbFactoryRef = DB_FACTORY;
+			dbFactoryRef = DB_FACTORY_BEAN_NAME;
 		}
 
 		// Converter
@@ -98,30 +111,41 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 		converterBuilder.addConstructorArgReference(dbFactoryRef);
 		converterBuilder.addConstructorArgReference(ctxRef);
 
+		String typeMapperRef = element.getAttribute("type-mapper-ref");
+		if (StringUtils.hasText(typeMapperRef)) {
+			converterBuilder.addPropertyReference("typeMapper", typeMapperRef);
+		}
+
 		if (conversionsDefinition != null) {
 			converterBuilder.addPropertyValue("customConversions", conversionsDefinition);
 		}
 
 		try {
-			registry.getBeanDefinition(INDEX_HELPER);
+			registry.getBeanDefinition(INDEX_HELPER_BEAN_NAME);
 		} catch (NoSuchBeanDefinitionException ignored) {
 			if (!StringUtils.hasText(dbFactoryRef)) {
-				dbFactoryRef = DB_FACTORY;
+				dbFactoryRef = DB_FACTORY_BEAN_NAME;
 			}
 			BeanDefinitionBuilder indexHelperBuilder = BeanDefinitionBuilder
 					.genericBeanDefinition(MongoPersistentEntityIndexCreator.class);
-			indexHelperBuilder.addConstructorArgValue(new RuntimeBeanReference(ctxRef));
-			indexHelperBuilder.addConstructorArgValue(new RuntimeBeanReference(dbFactoryRef));
-			registry.registerBeanDefinition(INDEX_HELPER, indexHelperBuilder.getBeanDefinition());
+			indexHelperBuilder.addConstructorArgReference(ctxRef);
+			indexHelperBuilder.addConstructorArgReference(dbFactoryRef);
+			indexHelperBuilder.addDependsOn(ctxRef);
+
+			parserContext.registerBeanComponent(new BeanComponentDefinition(indexHelperBuilder.getBeanDefinition(),
+					INDEX_HELPER_BEAN_NAME));
 		}
 
 		BeanDefinition validatingMongoEventListener = potentiallyCreateValidatingMongoEventListener(element, parserContext);
 
 		if (validatingMongoEventListener != null) {
-			registry.registerBeanDefinition(VALIDATING_EVENT_LISTENER, validatingMongoEventListener);
+			parserContext.registerBeanComponent(new BeanComponentDefinition(validatingMongoEventListener,
+					VALIDATING_EVENT_LISTENER_BEAN_NAME));
 		}
 
-		return converterBuilder.getBeanDefinition();
+		parserContext.registerBeanComponent(new BeanComponentDefinition(converterBuilder.getBeanDefinition(), id));
+		parserContext.popAndRegisterContainingComponent();
+		return null;
 	}
 
 	private BeanDefinition potentiallyCreateValidatingMongoEventListener(Element element, ParserContext parserContext) {
@@ -135,7 +159,6 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 			RuntimeBeanReference validator = getValidator(builder, parserContext);
 
 			if (validator != null) {
-
 				builder.getRawBeanDefinition().setBeanClass(ValidatingMongoEventListener.class);
 				builder.addConstructorArgValue(validator);
 
@@ -148,7 +171,7 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 
 	private RuntimeBeanReference getValidator(Object source, ParserContext parserContext) {
 
-		if (!jsr303Present) {
+		if (!JSR_303_PRESENT) {
 			return null;
 		}
 
@@ -157,37 +180,75 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 		validatorDef.setSource(source);
 		validatorDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
 		String validatorName = parserContext.getReaderContext().registerWithGeneratedName(validatorDef);
-		parserContext.registerComponent(new BeanComponentDefinition(validatorDef, validatorName));
+		parserContext.registerBeanComponent(new BeanComponentDefinition(validatorDef, validatorName));
 
 		return new RuntimeBeanReference(validatorName);
 	}
 
-	private String potentiallyCreateMappingContext(Element element, ParserContext parserContext,
-			BeanDefinition conversionsDefinition) {
+	public static String potentiallyCreateMappingContext(Element element, ParserContext parserContext,
+			BeanDefinition conversionsDefinition, String converterId) {
 
 		String ctxRef = element.getAttribute("mapping-context-ref");
-		if (!StringUtils.hasText(ctxRef)) {
-			BeanDefinitionBuilder mappingContextBuilder = BeanDefinitionBuilder
-					.genericBeanDefinition(MongoMappingContext.class);
 
-			Set<String> classesToAdd = getInititalEntityClasses(element, mappingContextBuilder);
-			if (classesToAdd != null) {
-				mappingContextBuilder.addPropertyValue("initialEntitySet", classesToAdd);
-			}
-
-			if (conversionsDefinition != null) {
-				AbstractBeanDefinition simpleTypesDefinition = new GenericBeanDefinition();
-				simpleTypesDefinition.setFactoryBeanName("customConversions");
-				simpleTypesDefinition.setFactoryMethodName("getSimpleTypeHolder");
-
-				mappingContextBuilder.addPropertyValue("simpleTypeHolder", simpleTypesDefinition);
-			}
-
-			parserContext.getRegistry().registerBeanDefinition(MAPPING_CONTEXT, mappingContextBuilder.getBeanDefinition());
-			ctxRef = MAPPING_CONTEXT;
+		if (StringUtils.hasText(ctxRef)) {
+			return ctxRef;
 		}
 
+		BeanComponentDefinitionBuilder componentDefinitionBuilder = new BeanComponentDefinitionBuilder(element,
+				parserContext);
+
+		BeanDefinitionBuilder mappingContextBuilder = BeanDefinitionBuilder
+				.genericBeanDefinition(MongoMappingContext.class);
+
+		Set<String> classesToAdd = getInititalEntityClasses(element);
+
+		if (classesToAdd != null) {
+			mappingContextBuilder.addPropertyValue("initialEntitySet", classesToAdd);
+		}
+
+		if (conversionsDefinition != null) {
+			AbstractBeanDefinition simpleTypesDefinition = new GenericBeanDefinition();
+			simpleTypesDefinition.setFactoryBeanName("customConversions");
+			simpleTypesDefinition.setFactoryMethodName("getSimpleTypeHolder");
+
+			mappingContextBuilder.addPropertyValue("simpleTypeHolder", simpleTypesDefinition);
+		}
+
+		parseFieldNamingStrategy(element, parserContext.getReaderContext(), mappingContextBuilder);
+
+		ctxRef = converterId == null || DEFAULT_CONVERTER_BEAN_NAME.equals(converterId) ? MAPPING_CONTEXT_BEAN_NAME
+				: converterId + "." + MAPPING_CONTEXT_BEAN_NAME;
+
+		parserContext.registerBeanComponent(componentDefinitionBuilder.getComponent(mappingContextBuilder, ctxRef));
 		return ctxRef;
+	}
+
+	private static void parseFieldNamingStrategy(Element element, ReaderContext context, BeanDefinitionBuilder builder) {
+
+		String abbreviateFieldNames = element.getAttribute("abbreviate-field-names");
+		String fieldNamingStrategy = element.getAttribute("field-naming-strategy-ref");
+
+		boolean fieldNamingStrategyReferenced = StringUtils.hasText(fieldNamingStrategy);
+		boolean abbreviationActivated = StringUtils.hasText(abbreviateFieldNames)
+				&& Boolean.parseBoolean(abbreviateFieldNames);
+
+		if (fieldNamingStrategyReferenced && abbreviationActivated) {
+			context.error("Field name abbreviation cannot be activated if a field-naming-strategy-ref is configured!",
+					element);
+			return;
+		}
+
+		Object value = null;
+
+		if ("true".equals(abbreviateFieldNames)) {
+			value = new RootBeanDefinition(CamelCaseAbbreviatingFieldNamingStrategy.class);
+		} else if (fieldNamingStrategyReferenced) {
+			value = new RuntimeBeanReference(fieldNamingStrategy);
+		}
+
+		if (value != null) {
+			builder.addPropertyValue("fieldNamingStrategy", value);
+		}
 	}
 
 	private BeanDefinition getCustomConversions(Element element, ParserContext parserContext) {
@@ -224,7 +285,7 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 			AbstractBeanDefinition conversionsBean = conversionsBuilder.getBeanDefinition();
 			conversionsBean.setSource(parserContext.extractSource(element));
 
-			parserContext.getRegistry().registerBeanDefinition("customConversions", conversionsBean);
+			parserContext.registerBeanComponent(new BeanComponentDefinition(conversionsBean, "customConversions"));
 
 			return conversionsBean;
 		}
@@ -232,7 +293,7 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 		return null;
 	}
 
-	public Set<String> getInititalEntityClasses(Element element, BeanDefinitionBuilder builder) {
+	private static Set<String> getInititalEntityClasses(Element element) {
 
 		String basePackage = element.getAttribute(BASE_PACKAGE);
 
@@ -269,6 +330,20 @@ public class MappingMongoConverterParser extends AbstractBeanDefinitionParser {
 		parserContext.getReaderContext().error(
 				"Element <converter> must specify 'ref' or contain a bean definition for the converter", element);
 		return null;
+	}
+
+	public static String createIsNewStrategyFactoryBeanDefinition(String mappingContextRef, ParserContext context,
+			Element element) {
+
+		BeanDefinitionBuilder mappingContextStrategyFactoryBuilder = BeanDefinitionBuilder
+				.rootBeanDefinition(MappingContextIsNewStrategyFactory.class);
+		mappingContextStrategyFactoryBuilder.addConstructorArgReference(mappingContextRef);
+
+		BeanComponentDefinitionBuilder builder = new BeanComponentDefinitionBuilder(element, context);
+		context.registerBeanComponent(builder.getComponent(mappingContextStrategyFactoryBuilder,
+				IS_NEW_STRATEGY_FACTORY_BEAN_NAME));
+
+		return IS_NEW_STRATEGY_FACTORY_BEAN_NAME;
 	}
 
 	/**

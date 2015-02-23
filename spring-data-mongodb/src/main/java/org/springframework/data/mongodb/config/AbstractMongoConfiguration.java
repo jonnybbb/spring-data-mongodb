@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2012 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,22 +27,33 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.data.annotation.Persistent;
 import org.springframework.data.authentication.UserCredentials;
+import org.springframework.data.mapping.context.MappingContextIsNewStrategyFactory;
+import org.springframework.data.mapping.model.CamelCaseAbbreviatingFieldNamingStrategy;
+import org.springframework.data.mapping.model.FieldNamingStrategy;
+import org.springframework.data.mapping.model.PropertyNameFieldNamingStrategy;
+import org.springframework.data.mongodb.MongoDbFactory;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.SimpleMongoDbFactory;
 import org.springframework.data.mongodb.core.convert.CustomConversions;
+import org.springframework.data.mongodb.core.convert.DbRefResolver;
+import org.springframework.data.mongodb.core.convert.DefaultDbRefResolver;
 import org.springframework.data.mongodb.core.convert.MappingMongoConverter;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.MongoMappingContext;
+import org.springframework.data.support.CachingIsNewStrategyFactory;
+import org.springframework.data.support.IsNewStrategyFactory;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.StringUtils;
 
 import com.mongodb.Mongo;
 
 /**
- * Base class for Spring Data Mongo configuration using JavaConfig.
+ * Base class for Spring Data MongoDB configuration using JavaConfig.
  * 
  * @author Mark Pollack
  * @author Oliver Gierke
+ * @author Thomas Darimont
+ * @author Ryan Tenney
  */
 @Configuration
 public abstract class AbstractMongoConfiguration {
@@ -55,12 +66,22 @@ public abstract class AbstractMongoConfiguration {
 	protected abstract String getDatabaseName();
 
 	/**
-	 * Return the {@link Mongo} instance to connect to.
+	 * Return the name of the authentication database to use. Defaults to {@literal null} and will turn into the value
+	 * returned by {@link #getDatabaseName()} later on effectively.
+	 * 
+	 * @return
+	 */
+	protected String getAuthenticationDatabaseName() {
+		return null;
+	}
+
+	/**
+	 * Return the {@link Mongo} instance to connect to. Annotate with {@link Bean} in case you want to expose a
+	 * {@link Mongo} instance to the {@link org.springframework.context.ApplicationContext}.
 	 * 
 	 * @return
 	 * @throws Exception
 	 */
-	@Bean
 	public abstract Mongo mongo() throws Exception;
 
 	/**
@@ -84,24 +105,23 @@ public abstract class AbstractMongoConfiguration {
 	 * @throws Exception
 	 */
 	@Bean
-	public SimpleMongoDbFactory mongoDbFactory() throws Exception {
-
-		UserCredentials creadentials = getUserCredentials();
-
-		if (creadentials == null) {
-			return new SimpleMongoDbFactory(mongo(), getDatabaseName());
-		} else {
-			return new SimpleMongoDbFactory(mongo(), getDatabaseName(), creadentials);
-		}
+	public MongoDbFactory mongoDbFactory() throws Exception {
+		return new SimpleMongoDbFactory(mongo(), getDatabaseName(), getUserCredentials(), getAuthenticationDatabaseName());
 	}
 
 	/**
-	 * Return the base package to scan for mapped {@link Document}s.
+	 * Return the base package to scan for mapped {@link Document}s. Will return the package name of the configuration
+	 * class' (the concrete class, not this one here) by default. So if you have a {@code com.acme.AppConfig} extending
+	 * {@link AbstractMongoConfiguration} the base package will be considered {@code com.acme} unless the method is
+	 * overriden to implement alternate behaviour.
 	 * 
-	 * @return
+	 * @return the base package to scan for mapped {@link Document} classes or {@literal null} to not enable scanning for
+	 *         entities.
 	 */
 	protected String getMappingBasePackage() {
-		return null;
+
+		Package mappingBasePackage = getClass().getPackage();
+		return mappingBasePackage == null ? null : mappingBasePackage.getName();
 	}
 
 	/**
@@ -127,9 +147,20 @@ public abstract class AbstractMongoConfiguration {
 		MongoMappingContext mappingContext = new MongoMappingContext();
 		mappingContext.setInitialEntitySet(getInitialEntitySet());
 		mappingContext.setSimpleTypeHolder(customConversions().getSimpleTypeHolder());
-		mappingContext.afterPropertiesSet();
+		mappingContext.setFieldNamingStrategy(fieldNamingStrategy());
 
 		return mappingContext;
+	}
+
+	/**
+	 * Returns a {@link MappingContextIsNewStrategyFactory} wrapped into a {@link CachingIsNewStrategyFactory}.
+	 * 
+	 * @return
+	 * @throws ClassNotFoundException
+	 */
+	@Bean
+	public IsNewStrategyFactory isNewStrategyFactory() throws ClassNotFoundException {
+		return new CachingIsNewStrategyFactory(new MappingContextIsNewStrategyFactory(mongoMappingContext()));
 	}
 
 	/**
@@ -156,8 +187,11 @@ public abstract class AbstractMongoConfiguration {
 	 */
 	@Bean
 	public MappingMongoConverter mappingMongoConverter() throws Exception {
-		MappingMongoConverter converter = new MappingMongoConverter(mongoDbFactory(), mongoMappingContext());
+
+		DbRefResolver dbRefResolver = new DefaultDbRefResolver(mongoDbFactory());
+		MappingMongoConverter converter = new MappingMongoConverter(dbRefResolver, mongoMappingContext());
 		converter.setCustomConversions(customConversions());
+
 		return converter;
 	}
 
@@ -186,5 +220,27 @@ public abstract class AbstractMongoConfiguration {
 		}
 
 		return initialEntitySet;
+	}
+
+	/**
+	 * Configures whether to abbreviate field names for domain objects by configuring a
+	 * {@link CamelCaseAbbreviatingFieldNamingStrategy} on the {@link MongoMappingContext} instance created. For advanced
+	 * customization needs, consider overriding {@link #mappingMongoConverter()}.
+	 * 
+	 * @return
+	 */
+	protected boolean abbreviateFieldNames() {
+		return false;
+	}
+
+	/**
+	 * Configures a {@link FieldNamingStrategy} on the {@link MongoMappingContext} instance created.
+	 * 
+	 * @return
+	 * @since 1.5
+	 */
+	protected FieldNamingStrategy fieldNamingStrategy() {
+		return abbreviateFieldNames() ? new CamelCaseAbbreviatingFieldNamingStrategy()
+				: PropertyNameFieldNamingStrategy.INSTANCE;
 	}
 }

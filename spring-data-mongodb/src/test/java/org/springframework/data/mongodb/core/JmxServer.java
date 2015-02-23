@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2010 the original author or authors.
+ * Copyright 2002-2013 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.springframework.data.mongodb.core;
 
 import org.springframework.context.support.ClassPathXmlApplicationContext;
@@ -22,6 +21,7 @@ import org.springframework.context.support.ClassPathXmlApplicationContext;
  * Server application than can be run as an app or unit test.
  * 
  * @author Mark Pollack
+ * @author Oliver Gierke
  */
 public class JmxServer {
 
@@ -29,8 +29,8 @@ public class JmxServer {
 		new JmxServer().run();
 	}
 
+	@SuppressWarnings("resource")
 	public void run() {
 		new ClassPathXmlApplicationContext(new String[] { "infrastructure.xml", "server-jmx.xml" });
 	}
-
 }

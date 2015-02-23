@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,25 +25,24 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
-import org.springframework.data.mongodb.core.geo.Distance;
-import org.springframework.data.mongodb.core.geo.GeoResults;
-import org.springframework.data.mongodb.core.geo.Point;
+import org.springframework.data.geo.Distance;
+import org.springframework.data.geo.GeoResults;
+import org.springframework.data.geo.Point;
+import org.springframework.data.mongodb.core.query.TextCriteria;
 import org.springframework.data.mongodb.repository.Near;
 import org.springframework.data.mongodb.repository.Person;
-import org.springframework.data.mongodb.repository.query.MongoParameters;
-import org.springframework.data.mongodb.repository.query.MongoQueryMethod;
 import org.springframework.data.repository.query.Parameter;
 
 /**
  * Unit tests for {@link MongoParameters}.
  * 
  * @author Oliver Gierke
+ * @author Christoph Strobl
  */
 @RunWith(MockitoJUnitRunner.class)
 public class MongoParametersUnitTests {
 
-	@Mock
-	MongoQueryMethod queryMethod;
+	@Mock MongoQueryMethod queryMethod;
 
 	@Test
 	public void discoversDistanceParameter() throws NoSuchMethodException, SecurityException {
@@ -100,6 +99,28 @@ public class MongoParametersUnitTests {
 		assertThat(parameters.getNearIndex(), is(1));
 	}
 
+	/**
+	 * @see DATAMONGO-973
+	 */
+	@Test
+	public void shouldFindTextCriteriaAtItsIndex() throws SecurityException, NoSuchMethodException {
+
+		Method method = PersonRepository.class.getMethod("findByNameAndText", String.class, TextCriteria.class);
+		MongoParameters parameters = new MongoParameters(method, false);
+		assertThat(parameters.getFullTextParameterIndex(), is(1));
+	}
+
+	/**
+	 * @see DATAMONGO-973
+	 */
+	@Test
+	public void shouldTreatTextCriteriaParameterAsSpecialParameter() throws SecurityException, NoSuchMethodException {
+
+		Method method = PersonRepository.class.getMethod("findByNameAndText", String.class, TextCriteria.class);
+		MongoParameters parameters = new MongoParameters(method, false);
+		assertThat(parameters.getParameter(parameters.getFullTextParameterIndex()).isSpecialParameter(), is(true));
+	}
+
 	interface PersonRepository {
 
 		List<Person> findByLocationNear(Point point, Distance distance);
@@ -113,5 +134,7 @@ public class MongoParametersUnitTests {
 		GeoResults<Person> findByOtherLocationAndLocationNear(Point point, @Near Point anotherLocation);
 
 		GeoResults<Person> validDoubleArrays(double[] first, @Near double[] second);
+
+		List<Person> findByNameAndText(String name, TextCriteria text);
 	}
 }
