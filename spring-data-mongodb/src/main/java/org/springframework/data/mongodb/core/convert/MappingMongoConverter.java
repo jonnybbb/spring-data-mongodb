@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2012 by the original author(s).
+ * Copyright 2011-2014 by the original author(s).
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,11 @@
  */
 package org.springframework.data.mongodb.core.convert;
 
-import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -29,16 +29,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
-import org.springframework.core.CollectionFactory;
 import org.springframework.core.convert.ConversionException;
-import org.springframework.core.convert.support.ConversionServiceFactory;
+import org.springframework.core.convert.ConversionService;
+import org.springframework.core.convert.support.DefaultConversionService;
+import org.springframework.data.convert.CollectionFactory;
 import org.springframework.data.convert.EntityInstantiator;
 import org.springframework.data.convert.TypeMapper;
 import org.springframework.data.mapping.Association;
 import org.springframework.data.mapping.AssociationHandler;
+import org.springframework.data.mapping.PersistentPropertyAccessor;
+import org.springframework.data.mapping.PreferredConstructor.Parameter;
 import org.springframework.data.mapping.PropertyHandler;
 import org.springframework.data.mapping.context.MappingContext;
-import org.springframework.data.mapping.model.BeanWrapper;
+import org.springframework.data.mapping.model.ConvertingPropertyAccessor;
 import org.springframework.data.mapping.model.DefaultSpELExpressionEvaluator;
 import org.springframework.data.mapping.model.MappingException;
 import org.springframework.data.mapping.model.ParameterValueProvider;
@@ -46,6 +49,7 @@ import org.springframework.data.mapping.model.PersistentEntityParameterValueProv
 import org.springframework.data.mapping.model.PropertyValueProvider;
 import org.springframework.data.mapping.model.SpELContext;
 import org.springframework.data.mapping.model.SpELExpressionEvaluator;
+import org.springframework.data.mapping.model.SpELExpressionParameterValueProvider;
 import org.springframework.data.mongodb.MongoDbFactory;
 import org.springframework.data.mongodb.core.mapping.MongoPersistentEntity;
 import org.springframework.data.mongodb.core.mapping.MongoPersistentProperty;
@@ -53,12 +57,11 @@ import org.springframework.data.util.ClassTypeInformation;
 import org.springframework.data.util.TypeInformation;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.util.Assert;
+import org.springframework.util.ClassUtils;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import com.mongodb.BasicDBList;
 import com.mongodb.BasicDBObject;
-import com.mongodb.DB;
 import com.mongodb.DBObject;
 import com.mongodb.DBRef;
 
@@ -68,43 +71,60 @@ import com.mongodb.DBRef;
  * 
  * @author Oliver Gierke
  * @author Jon Brisbin
+ * @author Patrik Wasik
+ * @author Thomas Darimont
+ * @author Christoph Strobl
  */
-public class MappingMongoConverter extends AbstractMongoConverter implements ApplicationContextAware {
+public class MappingMongoConverter extends AbstractMongoConverter implements ApplicationContextAware, ValueResolver {
 
-	protected static final Logger log = LoggerFactory.getLogger(MappingMongoConverter.class);
+	private static final String INCOMPATIBLE_TYPES = "Cannot convert %1$s of type %2$s into an instance of %3$s! Implement a custom Converter<%2$s, %3$s> and register it with the CustomConversions. Parent object was: %4$s";
+
+	protected static final Logger LOGGER = LoggerFactory.getLogger(MappingMongoConverter.class);
 
 	protected final MappingContext<? extends MongoPersistentEntity<?>, MongoPersistentProperty> mappingContext;
 	protected final SpelExpressionParser spelExpressionParser = new SpelExpressionParser();
-	protected final MongoDbFactory mongoDbFactory;
 	protected final QueryMapper idMapper;
+	protected final DbRefResolver dbRefResolver;
+
 	protected ApplicationContext applicationContext;
-	protected boolean useFieldAccessOnly = true;
 	protected MongoTypeMapper typeMapper;
 	protected String mapKeyDotReplacement = null;
 
 	private SpELContext spELContext;
 
 	/**
-	 * Creates a new {@link MappingMongoConverter} given the new {@link MongoDbFactory} and {@link MappingContext}.
+	 * Creates a new {@link MappingMongoConverter} given the new {@link DbRefResolver} and {@link MappingContext}.
 	 * 
 	 * @param mongoDbFactory must not be {@literal null}.
 	 * @param mappingContext must not be {@literal null}.
 	 */
-	@SuppressWarnings("deprecation")
-	public MappingMongoConverter(MongoDbFactory mongoDbFactory,
+	public MappingMongoConverter(DbRefResolver dbRefResolver,
 			MappingContext<? extends MongoPersistentEntity<?>, MongoPersistentProperty> mappingContext) {
 
-		super(ConversionServiceFactory.createDefaultConversionService());
+		super(new DefaultConversionService());
 
-		Assert.notNull(mongoDbFactory);
-		Assert.notNull(mappingContext);
+		Assert.notNull(dbRefResolver, "DbRefResolver must not be null!");
+		Assert.notNull(mappingContext, "MappingContext must not be null!");
 
-		this.mongoDbFactory = mongoDbFactory;
+		this.dbRefResolver = dbRefResolver;
 		this.mappingContext = mappingContext;
 		this.typeMapper = new DefaultMongoTypeMapper(DefaultMongoTypeMapper.DEFAULT_TYPE_KEY, mappingContext);
 		this.idMapper = new QueryMapper(this);
 
 		this.spELContext = new SpELContext(DBObjectPropertyAccessor.INSTANCE);
+	}
+
+	/**
+	 * Creates a new {@link MappingMongoConverter} given the new {@link MongoDbFactory} and {@link MappingContext}.
+	 * 
+	 * @deprecated use the constructor taking a {@link DbRefResolver} instead.
+	 * @param mongoDbFactory must not be {@literal null}.
+	 * @param mappingContext must not be {@literal null}.
+	 */
+	@Deprecated
+	public MappingMongoConverter(MongoDbFactory mongoDbFactory,
+			MappingContext<? extends MongoPersistentEntity<?>, MongoPersistentProperty> mappingContext) {
+		this(new DefaultDbRefResolver(mongoDbFactory), mappingContext);
 	}
 
 	/**
@@ -118,6 +138,15 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	public void setTypeMapper(MongoTypeMapper typeMapper) {
 		this.typeMapper = typeMapper == null ? new DefaultMongoTypeMapper(DefaultMongoTypeMapper.DEFAULT_TYPE_KEY,
 				mappingContext) : typeMapper;
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.core.convert.MongoConverter#getTypeMapper()
+	 */
+	@Override
+	public MongoTypeMapper getTypeMapper() {
+		return this.typeMapper;
 	}
 
 	/**
@@ -140,17 +169,6 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		return mappingContext;
 	}
 
-	/**
-	 * Configures whether to use field access only for entity mapping. Setting this to true will force the
-	 * {@link MongoConverter} to not go through getters or setters even if they are present for getting and setting
-	 * property values.
-	 * 
-	 * @param useFieldAccessOnly
-	 */
-	public void setUseFieldAccessOnly(boolean useFieldAccessOnly) {
-		this.useFieldAccessOnly = useFieldAccessOnly;
-	}
-
 	/*
 	 * (non-Javadoc)
 	 * @see org.springframework.context.ApplicationContextAware#setApplicationContext(org.springframework.context.ApplicationContext)
@@ -170,11 +188,11 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	}
 
 	protected <S extends Object> S read(TypeInformation<S> type, DBObject dbo) {
-		return read(type, dbo, null);
+		return read(type, dbo, ObjectPath.ROOT);
 	}
 
 	@SuppressWarnings("unchecked")
-	protected <S extends Object> S read(TypeInformation<S> type, DBObject dbo, Object parent) {
+	private <S extends Object> S read(TypeInformation<S> type, DBObject dbo, ObjectPath path) {
 
 		if (null == dbo) {
 			return null;
@@ -192,11 +210,15 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		}
 
 		if (typeToUse.isCollectionLike() && dbo instanceof BasicDBList) {
-			return (S) readCollectionOrArray(typeToUse, (BasicDBList) dbo, parent);
+			return (S) readCollectionOrArray(typeToUse, (BasicDBList) dbo, path);
 		}
 
 		if (typeToUse.isMap()) {
-			return (S) readMap(typeToUse, dbo, parent);
+			return (S) readMap(typeToUse, dbo, path);
+		}
+
+		if (dbo instanceof BasicDBList) {
+			throw new MappingException(String.format(INCOMPATIBLE_TYPES, dbo, BasicDBList.class, typeToUse.getType(), path));
 		}
 
 		// Retrieve persistent entity info
@@ -206,59 +228,79 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			throw new MappingException("No mapping metadata found for " + rawType.getName());
 		}
 
-		return read(persistentEntity, dbo, parent);
+		return read(persistentEntity, dbo, path);
 	}
 
 	private ParameterValueProvider<MongoPersistentProperty> getParameterProvider(MongoPersistentEntity<?> entity,
-			DBObject source, DefaultSpELExpressionEvaluator evaluator, Object parent) {
+			DBObject source, DefaultSpELExpressionEvaluator evaluator, ObjectPath path) {
 
-		MongoDbPropertyValueProvider provider = new MongoDbPropertyValueProvider(source, evaluator, parent);
+		MongoDbPropertyValueProvider provider = new MongoDbPropertyValueProvider(source, evaluator, path);
 		PersistentEntityParameterValueProvider<MongoPersistentProperty> parameterProvider = new PersistentEntityParameterValueProvider<MongoPersistentProperty>(
-				entity, provider, parent);
-		parameterProvider.setSpELEvaluator(evaluator);
+				entity, provider, path.getCurrentObject());
 
-		return parameterProvider;
+		return new ConverterAwareSpELExpressionParameterValueProvider(evaluator, conversionService, parameterProvider, path);
 	}
 
-	private <S extends Object> S read(final MongoPersistentEntity<S> entity, final DBObject dbo, Object parent) {
+	private <S extends Object> S read(final MongoPersistentEntity<S> entity, final DBObject dbo, final ObjectPath path) {
 
 		final DefaultSpELExpressionEvaluator evaluator = new DefaultSpELExpressionEvaluator(dbo, spELContext);
 
-		ParameterValueProvider<MongoPersistentProperty> provider = getParameterProvider(entity, dbo, evaluator, parent);
+		ParameterValueProvider<MongoPersistentProperty> provider = getParameterProvider(entity, dbo, evaluator, path);
 		EntityInstantiator instantiator = instantiators.getInstantiatorFor(entity);
 		S instance = instantiator.createInstance(entity, provider);
 
-		final BeanWrapper<MongoPersistentEntity<S>, S> wrapper = BeanWrapper.create(instance, conversionService);
-		final S result = wrapper.getBean();
+		final PersistentPropertyAccessor accessor = new ConvertingPropertyAccessor(entity.getPropertyAccessor(instance),
+				conversionService);
+
+		final MongoPersistentProperty idProperty = entity.getIdProperty();
+		final S result = instance;
+
+		// make sure id property is set before all other properties
+		Object idValue = null;
+
+		if (idProperty != null) {
+			idValue = getValueInternal(idProperty, dbo, evaluator, path);
+			accessor.setProperty(idProperty, idValue);
+		}
+
+		final ObjectPath currentPath = path.push(result, entity, idValue);
 
 		// Set properties not already set in the constructor
 		entity.doWithProperties(new PropertyHandler<MongoPersistentProperty>() {
 			public void doWithPersistentProperty(MongoPersistentProperty prop) {
 
-				boolean isConstructorProperty = entity.isConstructorArgument(prop);
-				boolean hasValueForProperty = dbo.containsField(prop.getFieldName());
-
-				if (!hasValueForProperty || isConstructorProperty) {
+				// we skip the id property since it was already set
+				if (idProperty != null && idProperty.equals(prop)) {
 					return;
 				}
 
-				Object obj = getValueInternal(prop, dbo, evaluator, result);
-				wrapper.setProperty(prop, obj, useFieldAccessOnly);
+				if (!dbo.containsField(prop.getFieldName()) || entity.isConstructorArgument(prop)) {
+					return;
+				}
+
+				accessor.setProperty(prop, getValueInternal(prop, dbo, evaluator, currentPath));
 			}
 		});
 
 		// Handle associations
 		entity.doWithAssociations(new AssociationHandler<MongoPersistentProperty>() {
 			public void doWithAssociation(Association<MongoPersistentProperty> association) {
-				MongoPersistentProperty inverseProp = association.getInverse();
-				Object obj = getValueInternal(inverseProp, dbo, evaluator, result);
-				try {
-					wrapper.setProperty(inverseProp, obj);
-				} catch (IllegalAccessException e) {
-					throw new MappingException(e.getMessage(), e);
-				} catch (InvocationTargetException e) {
-					throw new MappingException(e.getMessage(), e);
+
+				final MongoPersistentProperty property = association.getInverse();
+				Object value = dbo.get(property.getFieldName());
+
+				if (value == null) {
+					return;
 				}
+
+				DBRef dbref = value instanceof DBRef ? (DBRef) value : null;
+
+				DbRefProxyHandler handler = new DefaultDbRefProxyHandler(spELContext, mappingContext,
+						MappingMongoConverter.this);
+				DbRefResolverCallback callback = new DefaultDbRefResolverCallback(dbo, currentPath, evaluator,
+						MappingMongoConverter.this);
+
+				accessor.setProperty(property, dbRefResolver.resolveDbRef(property, dbref, callback, handler));
 			}
 		});
 
@@ -278,7 +320,12 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			Assert.isTrue(annotation != null, "The referenced property has to be mapped with @DBRef!");
 		}
 
-		return createDBRef(object, annotation);
+		// @see DATAMONGO-913
+		if (object instanceof LazyLoadingProxy) {
+			return ((LazyLoadingProxy) object).toDBRef();
+		}
+
+		return createDBRef(object, referingProperty);
 	}
 
 	/**
@@ -293,14 +340,17 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			return;
 		}
 
-		boolean handledByCustomConverter = conversions.getCustomWriteTarget(obj.getClass(), DBObject.class) != null;
-		TypeInformation<? extends Object> type = ClassTypeInformation.from(obj.getClass());
+		Class<?> entityType = obj.getClass();
+		boolean handledByCustomConverter = conversions.getCustomWriteTarget(entityType, DBObject.class) != null;
+		TypeInformation<? extends Object> type = ClassTypeInformation.from(entityType);
 
 		if (!handledByCustomConverter && !(dbo instanceof BasicDBList)) {
 			typeMapper.writeType(type, dbo);
 		}
 
-		writeInternal(obj, dbo, type);
+		Object target = obj instanceof LazyLoadingProxy ? ((LazyLoadingProxy) obj).getTarget() : obj;
+
+		writeInternal(target, dbo, type);
 	}
 
 	/**
@@ -316,7 +366,8 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			return;
 		}
 
-		Class<?> customTarget = conversions.getCustomWriteTarget(obj.getClass(), DBObject.class);
+		Class<?> entityType = obj.getClass();
+		Class<?> customTarget = conversions.getCustomWriteTarget(entityType, DBObject.class);
 
 		if (customTarget != null) {
 			DBObject result = conversionService.convert(obj, DBObject.class);
@@ -324,17 +375,17 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			return;
 		}
 
-		if (Map.class.isAssignableFrom(obj.getClass())) {
+		if (Map.class.isAssignableFrom(entityType)) {
 			writeMapInternal((Map<Object, Object>) obj, dbo, ClassTypeInformation.MAP);
 			return;
 		}
 
-		if (Collection.class.isAssignableFrom(obj.getClass())) {
+		if (Collection.class.isAssignableFrom(entityType)) {
 			writeCollectionInternal((Collection<?>) obj, ClassTypeInformation.LIST, (BasicDBList) dbo);
 			return;
 		}
 
-		MongoPersistentEntity<?> entity = mappingContext.getPersistentEntity(obj.getClass());
+		MongoPersistentEntity<?> entity = mappingContext.getPersistentEntity(entityType);
 		writeInternal(obj, dbo, entity);
 		addCustomTypeKeyIfNecessary(typeHint, obj, dbo);
 	}
@@ -349,44 +400,45 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			throw new MappingException("No mapping metadata found for entity of type " + obj.getClass().getName());
 		}
 
-		final BeanWrapper<MongoPersistentEntity<Object>, Object> wrapper = BeanWrapper.create(obj, conversionService);
-
-		// Write the ID
+		final PersistentPropertyAccessor accessor = entity.getPropertyAccessor(obj);
 		final MongoPersistentProperty idProperty = entity.getIdProperty();
+
 		if (!dbo.containsField("_id") && null != idProperty) {
 
 			try {
-				Object id = wrapper.getProperty(idProperty, Object.class, useFieldAccessOnly);
+				Object id = accessor.getProperty(idProperty);
 				dbo.put("_id", idMapper.convertId(id));
-			} catch (ConversionException ignored) {
-			}
+			} catch (ConversionException ignored) {}
 		}
 
 		// Write the properties
 		entity.doWithProperties(new PropertyHandler<MongoPersistentProperty>() {
 			public void doWithPersistentProperty(MongoPersistentProperty prop) {
 
-				if (prop.equals(idProperty)) {
+				if (prop.equals(idProperty) || !prop.isWritable()) {
 					return;
 				}
 
-				Object propertyObj = wrapper.getProperty(prop, prop.getType(), useFieldAccessOnly);
+				Object propertyObj = accessor.getProperty(prop);
 
 				if (null != propertyObj) {
+
 					if (!conversions.isSimpleType(propertyObj.getClass())) {
 						writePropertyInternal(propertyObj, dbo, prop);
 					} else {
-						writeSimpleInternal(propertyObj, dbo, prop.getFieldName());
+						writeSimpleInternal(propertyObj, dbo, prop);
 					}
 				}
 			}
 		});
 
 		entity.doWithAssociations(new AssociationHandler<MongoPersistentProperty>() {
+
 			public void doWithAssociation(Association<MongoPersistentProperty> association) {
+
 				MongoPersistentProperty inverseProp = association.getInverse();
-				Class<?> type = inverseProp.getType();
-				Object propertyObj = wrapper.getProperty(inverseProp, type, useFieldAccessOnly);
+				Object propertyObj = accessor.getProperty(inverseProp);
+
 				if (null != propertyObj) {
 					writePropertyInternal(propertyObj, dbo, inverseProp);
 				}
@@ -401,47 +453,68 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			return;
 		}
 
-		String name = prop.getFieldName();
+		DBObjectAccessor accessor = new DBObjectAccessor(dbo);
+
 		TypeInformation<?> valueType = ClassTypeInformation.from(obj.getClass());
 		TypeInformation<?> type = prop.getTypeInformation();
 
 		if (valueType.isCollectionLike()) {
 			DBObject collectionInternal = createCollection(asCollection(obj), prop);
-			dbo.put(name, collectionInternal);
+			accessor.put(prop, collectionInternal);
 			return;
 		}
 
 		if (valueType.isMap()) {
-			BasicDBObject mapDbObj = new BasicDBObject();
-			writeMapInternal((Map<Object, Object>) obj, mapDbObj, type);
-			dbo.put(name, mapDbObj);
+			DBObject mapDbObj = createMap((Map<Object, Object>) obj, prop);
+			accessor.put(prop, mapDbObj);
 			return;
 		}
 
 		if (prop.isDbReference()) {
-			DBRef dbRefObj = createDBRef(obj, prop.getDBRef());
+
+			DBRef dbRefObj = null;
+
+			/*
+			 * If we already have a LazyLoadingProxy, we use it's cached DBRef value instead of 
+			 * unnecessarily initializing it only to convert it to a DBRef a few instructions later.
+			 */
+			if (obj instanceof LazyLoadingProxy) {
+				dbRefObj = ((LazyLoadingProxy) obj).toDBRef();
+			}
+
+			dbRefObj = dbRefObj != null ? dbRefObj : createDBRef(obj, prop);
+
 			if (null != dbRefObj) {
-				dbo.put(name, dbRefObj);
+				accessor.put(prop, dbRefObj);
 				return;
 			}
+		}
+
+		/*
+		 * If we have a LazyLoadingProxy we make sure it is initialized first.
+		 */
+		if (obj instanceof LazyLoadingProxy) {
+			obj = ((LazyLoadingProxy) obj).getTarget();
 		}
 
 		// Lookup potential custom target type
 		Class<?> basicTargetType = conversions.getCustomWriteTarget(obj.getClass(), null);
 
 		if (basicTargetType != null) {
-			dbo.put(name, conversionService.convert(obj, basicTargetType));
+			accessor.put(prop, conversionService.convert(obj, basicTargetType));
 			return;
 		}
 
-		BasicDBObject propDbObj = new BasicDBObject();
-		addCustomTypeKeyIfNecessary(type, obj, propDbObj);
+		Object existingValue = accessor.get(prop);
+		BasicDBObject propDbObj = existingValue instanceof BasicDBObject ? (BasicDBObject) existingValue
+				: new BasicDBObject();
+		addCustomTypeKeyIfNecessary(ClassTypeInformation.from(prop.getRawType()), obj, propDbObj);
 
 		MongoPersistentEntity<?> entity = isSubtype(prop.getType(), obj.getClass()) ? mappingContext
 				.getPersistentEntity(obj.getClass()) : mappingContext.getPersistentEntity(type);
 
 		writeInternal(obj, propDbObj, entity);
-		dbo.put(name, propDbObj);
+		accessor.put(prop, propDbObj);
 	}
 
 	private boolean isSubtype(Class<?> left, Class<?> right) {
@@ -470,7 +543,6 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	 * 
 	 * @param collection must not be {@literal null}.
 	 * @param property must not be {@literal null}.
-	 * 
 	 * @return
 	 */
 	protected DBObject createCollection(Collection<?> collection, MongoPersistentProperty property) {
@@ -487,11 +559,47 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 				continue;
 			}
 
-			DBRef dbRef = createDBRef(element, property.getDBRef());
+			DBRef dbRef = createDBRef(element, property);
 			dbList.add(dbRef);
 		}
 
 		return dbList;
+	}
+
+	/**
+	 * Writes the given {@link Map} using the given {@link MongoPersistentProperty} information.
+	 * 
+	 * @param map must not {@literal null}.
+	 * @param property must not be {@literal null}.
+	 * @return
+	 */
+	protected DBObject createMap(Map<Object, Object> map, MongoPersistentProperty property) {
+
+		Assert.notNull(map, "Given map must not be null!");
+		Assert.notNull(property, "PersistentProperty must not be null!");
+
+		if (!property.isDbReference()) {
+			return writeMapInternal(map, new BasicDBObject(), property.getTypeInformation());
+		}
+
+		BasicDBObject dbObject = new BasicDBObject();
+
+		for (Map.Entry<Object, Object> entry : map.entrySet()) {
+
+			Object key = entry.getKey();
+			Object value = entry.getValue();
+
+			if (conversions.isSimpleType(key.getClass())) {
+
+				String simpleKey = prepareMapKey(key.toString());
+				dbObject.put(simpleKey, value != null ? createDBRef(value, property) : null);
+
+			} else {
+				throw new MappingException("Cannot use a complex object as a key value.");
+			}
+		}
+
+		return dbObject;
 	}
 
 	/**
@@ -535,12 +643,13 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	protected DBObject writeMapInternal(Map<Object, Object> obj, DBObject dbo, TypeInformation<?> propertyType) {
 
 		for (Map.Entry<Object, Object> entry : obj.entrySet()) {
+
 			Object key = entry.getKey();
 			Object val = entry.getValue();
+
 			if (conversions.isSimpleType(key.getClass())) {
-				// Don't use conversion service here as removal of ObjectToString converter results in some primitive types not
-				// being convertable
-				String simpleKey = potentiallyEscapeMapKey(key.toString());
+
+				String simpleKey = prepareMapKey(key);
 				if (val == null || conversions.isSimpleType(val.getClass())) {
 					writeSimpleInternal(val, dbo, simpleKey);
 				} else if (val instanceof Collection || val.getClass().isArray()) {
@@ -559,6 +668,21 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		}
 
 		return dbo;
+	}
+
+	/**
+	 * Prepares the given {@link Map} key to be converted into a {@link String}. Will invoke potentially registered custom
+	 * conversions and escape dots from the result as they're not supported as {@link Map} key in MongoDB.
+	 * 
+	 * @param key must not be {@literal null}.
+	 * @return
+	 */
+	private String prepareMapKey(Object key) {
+
+		Assert.notNull(key, "Map key must not be null!");
+
+		String convertedKey = potentiallyConvertMapKey(key);
+		return potentiallyEscapeMapKey(convertedKey);
 	}
 
 	/**
@@ -584,6 +708,22 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	}
 
 	/**
+	 * Returns a {@link String} representation of the given {@link Map} key
+	 * 
+	 * @param key
+	 * @return
+	 */
+	private String potentiallyConvertMapKey(Object key) {
+
+		if (key instanceof String) {
+			return (String) key;
+		}
+
+		return conversions.hasCustomWriteTarget(key.getClass(), String.class) ? (String) getPotentiallyConvertedSimpleWrite(key)
+				: key.toString();
+	}
+
+	/**
 	 * Translates the map key replacements in the given key just read with a dot in case a map key replacement has been
 	 * configured.
 	 * 
@@ -597,19 +737,20 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	/**
 	 * Adds custom type information to the given {@link DBObject} if necessary. That is if the value is not the same as
 	 * the one given. This is usually the case if you store a subtype of the actual declared type of the property.
-	 * 
+	 *
 	 * @param type
 	 * @param value must not be {@literal null}.
 	 * @param dbObject must not be {@literal null}.
 	 */
 	protected void addCustomTypeKeyIfNecessary(TypeInformation<?> type, Object value, DBObject dbObject) {
 
-		TypeInformation<?> actualType = type != null ? type.getActualType() : type;
+		TypeInformation<?> actualType = type != null ? type.getActualType() : null;
 		Class<?> reference = actualType == null ? Object.class : actualType.getType();
+		Class<?> valueType = ClassUtils.getUserClass(value.getClass());
 
-		boolean notTheSameClass = !value.getClass().equals(reference);
+		boolean notTheSameClass = !valueType.equals(reference);
 		if (notTheSameClass) {
-			typeMapper.writeType(value.getClass(), dbObject);
+			typeMapper.writeType(valueType, dbObject);
 		}
 	}
 
@@ -622,6 +763,11 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	 */
 	private void writeSimpleInternal(Object value, DBObject dbObject, String key) {
 		dbObject.put(key, getPotentiallyConvertedSimpleWrite(value));
+	}
+
+	private void writeSimpleInternal(Object value, DBObject dbObject, MongoPersistentProperty property) {
+		DBObjectAccessor accessor = new DBObjectAccessor(dbObject);
+		accessor.put(property, getPotentiallyConvertedSimpleWrite(value));
 	}
 
 	/**
@@ -657,7 +803,7 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	private Object getPotentiallyConvertedSimpleRead(Object value, Class<?> target) {
 
-		if (value == null || target == null) {
+		if (value == null || target == null || target.isAssignableFrom(value.getClass())) {
 			return value;
 		}
 
@@ -669,14 +815,19 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			return Enum.valueOf((Class<Enum>) target, value.toString());
 		}
 
-		return target.isAssignableFrom(value.getClass()) ? value : conversionService.convert(value, target);
+		return conversionService.convert(value, target);
 	}
 
-	protected DBRef createDBRef(Object target, org.springframework.data.mongodb.core.mapping.DBRef dbref) {
+	protected DBRef createDBRef(Object target, MongoPersistentProperty property) {
 
 		Assert.notNull(target);
 
+		if (target instanceof DBRef) {
+			return (DBRef) target;
+		}
+
 		MongoPersistentEntity<?> targetEntity = mappingContext.getPersistentEntity(target.getClass());
+		targetEntity = targetEntity == null ? targetEntity = mappingContext.getPersistentEntity(property) : targetEntity;
 
 		if (null == targetEntity) {
 			throw new MappingException("No mapping metadata found for " + target.getClass());
@@ -688,24 +839,31 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			throw new MappingException("No id property found on class " + targetEntity.getType());
 		}
 
-		BeanWrapper<MongoPersistentEntity<Object>, Object> wrapper = BeanWrapper.create(target, conversionService);
-		Object id = wrapper.getProperty(idProperty, Object.class, useFieldAccessOnly);
+		Object id = null;
+
+		if (target.getClass().equals(idProperty.getType())) {
+			id = target;
+		} else {
+			PersistentPropertyAccessor accessor = targetEntity.getPropertyAccessor(target);
+			id = accessor.getProperty(idProperty);
+		}
 
 		if (null == id) {
 			throw new MappingException("Cannot create a reference to an object with a NULL id.");
 		}
 
-		DB db = mongoDbFactory.getDb();
-		db = dbref != null && StringUtils.hasText(dbref.db()) ? mongoDbFactory.getDb(dbref.db()) : db;
-
-		return new DBRef(db, targetEntity.getCollection(), idMapper.convertId(id));
+		return dbRefResolver.createDbRef(property == null ? null : property.getDBRef(), targetEntity,
+				idMapper.convertId(id));
 	}
 
-	protected Object getValueInternal(MongoPersistentProperty prop, DBObject dbo, SpELExpressionEvaluator eval,
-			Object parent) {
-
-		MongoDbPropertyValueProvider provider = new MongoDbPropertyValueProvider(dbo, spELContext, parent);
-		return provider.getPropertyValue(prop);
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.core.convert.ValueResolver#getValueInternal(org.springframework.data.mongodb.core.mapping.MongoPersistentProperty, com.mongodb.DBObject, org.springframework.data.mapping.model.SpELExpressionEvaluator, java.lang.Object)
+	 */
+	@Override
+	public Object getValueInternal(MongoPersistentProperty prop, DBObject dbo, SpELExpressionEvaluator evaluator,
+			ObjectPath path) {
+		return new MongoDbPropertyValueProvider(dbo, evaluator, path).getPropertyValue(prop);
 	}
 
 	/**
@@ -713,52 +871,67 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	 * 
 	 * @param targetType must not be {@literal null}.
 	 * @param sourceValue must not be {@literal null}.
-	 * @return the converted {@link Collections}, will never be {@literal null}.
+	 * @param path must not be {@literal null}.
+	 * @return the converted {@link Collection} or array, will never be {@literal null}.
 	 */
-	@SuppressWarnings("unchecked")
-	private Collection<?> readCollectionOrArray(TypeInformation<?> targetType, BasicDBList sourceValue, Object parent) {
+	private Object readCollectionOrArray(TypeInformation<?> targetType, BasicDBList sourceValue, ObjectPath path) {
 
-		Assert.notNull(targetType);
-
-		if (sourceValue.isEmpty()) {
-			return Collections.emptySet();
-		}
+		Assert.notNull(targetType, "Target type must not be null!");
+		Assert.notNull(path, "Object path must not be null!");
 
 		Class<?> collectionType = targetType.getType();
-		collectionType = Collection.class.isAssignableFrom(collectionType) ? collectionType : List.class;
 
-		Collection<Object> items = targetType.getType().isArray() ? new ArrayList<Object>() : CollectionFactory
-				.createCollection(collectionType, sourceValue.size());
+		if (sourceValue.isEmpty()) {
+			return getPotentiallyConvertedSimpleRead(new HashSet<Object>(), collectionType);
+		}
+
 		TypeInformation<?> componentType = targetType.getComponentType();
+		Class<?> rawComponentType = componentType == null ? null : componentType.getType();
+
+		collectionType = Collection.class.isAssignableFrom(collectionType) ? collectionType : List.class;
+		Collection<Object> items = targetType.getType().isArray() ? new ArrayList<Object>() : CollectionFactory
+				.createCollection(collectionType, rawComponentType, sourceValue.size());
 
 		for (int i = 0; i < sourceValue.size(); i++) {
+
 			Object dbObjItem = sourceValue.get(i);
+
 			if (dbObjItem instanceof DBRef) {
-				items.add(read(componentType, ((DBRef) dbObjItem).fetch(), parent));
+				items.add(DBRef.class.equals(rawComponentType) ? dbObjItem : read(componentType, readRef((DBRef) dbObjItem),
+						path));
 			} else if (dbObjItem instanceof DBObject) {
-				items.add(read(componentType, (DBObject) dbObjItem, parent));
+				items.add(read(componentType, (DBObject) dbObjItem, path));
 			} else {
-				items.add(getPotentiallyConvertedSimpleRead(dbObjItem, componentType == null ? null : componentType.getType()));
+				items.add(getPotentiallyConvertedSimpleRead(dbObjItem, rawComponentType));
 			}
 		}
 
-		return items;
+		return getPotentiallyConvertedSimpleRead(items, targetType.getType());
 	}
 
 	/**
 	 * Reads the given {@link DBObject} into a {@link Map}. will recursively resolve nested {@link Map}s as well.
 	 * 
 	 * @param type the {@link Map} {@link TypeInformation} to be used to unmarshall this {@link DBObject}.
-	 * @param dbObject
+	 * @param dbObject must not be {@literal null}
+	 * @param path must not be {@literal null}
 	 * @return
 	 */
 	@SuppressWarnings("unchecked")
-	protected Map<Object, Object> readMap(TypeInformation<?> type, DBObject dbObject, Object parent) {
+	protected Map<Object, Object> readMap(TypeInformation<?> type, DBObject dbObject, ObjectPath path) {
 
-		Assert.notNull(dbObject);
+		Assert.notNull(dbObject, "DBObject must not be null!");
+		Assert.notNull(path, "Object path must not be null!");
 
 		Class<?> mapType = typeMapper.readType(dbObject, type).getType();
-		Map<Object, Object> map = CollectionFactory.createMap(mapType, dbObject.keySet().size());
+
+		TypeInformation<?> keyType = type.getComponentType();
+		Class<?> rawKeyType = keyType == null ? null : keyType.getType();
+
+		TypeInformation<?> valueType = type.getMapValueType();
+		Class<?> rawValueType = valueType == null ? null : valueType.getType();
+
+		Map<Object, Object> map = CollectionFactory.createMap(mapType, rawKeyType, dbObject.keySet().size());
 		Map<String, Object> sourceMap = dbObject.toMap();
 
 		for (Entry<String, Object> entry : sourceMap.entrySet()) {
@@ -768,17 +941,16 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 
 			Object key = potentiallyUnescapeMapKey(entry.getKey());
 
-			TypeInformation<?> keyTypeInformation = type.getComponentType();
-			if (keyTypeInformation != null) {
-				Class<?> keyType = keyTypeInformation.getType();
-				key = conversionService.convert(key, keyType);
+			if (rawKeyType != null) {
+				key = conversionService.convert(key, rawKeyType);
 			}
 
 			Object value = entry.getValue();
-			TypeInformation<?> valueType = type.getMapValueType();
 
 			if (value instanceof DBObject) {
-				map.put(key, read(valueType, (DBObject) value, parent));
+				map.put(key, read(valueType, (DBObject) value, path));
+			} else if (value instanceof DBRef) {
+				map.put(key, DBRef.class.equals(rawValueType) ? value : read(valueType, readRef((DBRef) value)));
 			} else {
 				Class<?> valueClass = valueType == null ? null : valueType.getType();
 				map.put(key, getPotentiallyConvertedSimpleRead(value, valueClass));
@@ -788,47 +960,38 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		return map;
 	}
 
-	protected <T> List<?> unwrapList(BasicDBList dbList, TypeInformation<T> targetType) {
-		List<Object> rootList = new ArrayList<Object>();
-		for (int i = 0; i < dbList.size(); i++) {
-			Object obj = dbList.get(i);
-			if (obj instanceof BasicDBList) {
-				rootList.add(unwrapList((BasicDBList) obj, targetType.getComponentType()));
-			} else if (obj instanceof DBObject) {
-				rootList.add(read(targetType, (DBObject) obj));
-			} else {
-				rootList.add(obj);
-			}
-		}
-		return rootList;
-	}
-
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mongodb.core.convert.MongoWriter#convertToMongoType(java.lang.Object, org.springframework.data.util.TypeInformation)
+	 */
 	@SuppressWarnings("unchecked")
-	public Object convertToMongoType(Object obj) {
+	public Object convertToMongoType(Object obj, TypeInformation<?> typeInformation) {
 
 		if (obj == null) {
 			return null;
 		}
 
-		Class<?> target = conversions.getCustomWriteTarget(getClass());
+		Class<?> target = conversions.getCustomWriteTarget(obj.getClass());
 		if (target != null) {
 			return conversionService.convert(obj, target);
 		}
 
-		if (null != obj && conversions.isSimpleType(obj.getClass())) {
+		if (conversions.isSimpleType(obj.getClass())) {
 			// Doesn't need conversion
 			return getPotentiallyConvertedSimpleWrite(obj);
 		}
 
+		TypeInformation<?> typeHint = typeInformation;
+
 		if (obj instanceof BasicDBList) {
-			return maybeConvertList((BasicDBList) obj);
+			return maybeConvertList((BasicDBList) obj, typeHint);
 		}
 
 		if (obj instanceof DBObject) {
 			DBObject newValueDbo = new BasicDBObject();
 			for (String vk : ((DBObject) obj).keySet()) {
 				Object o = ((DBObject) obj).get(vk);
-				newValueDbo.put(vk, convertToMongoType(o));
+				newValueDbo.put(vk, convertToMongoType(o, typeHint));
 			}
 			return newValueDbo;
 		}
@@ -836,29 +999,36 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		if (obj instanceof Map) {
 			DBObject result = new BasicDBObject();
 			for (Map.Entry<Object, Object> entry : ((Map<Object, Object>) obj).entrySet()) {
-				result.put(entry.getKey().toString(), convertToMongoType(entry.getValue()));
+				result.put(entry.getKey().toString(), convertToMongoType(entry.getValue(), typeHint));
 			}
 			return result;
 		}
 
 		if (obj.getClass().isArray()) {
-			return maybeConvertList(Arrays.asList((Object[]) obj));
+			return maybeConvertList(Arrays.asList((Object[]) obj), typeHint);
 		}
 
 		if (obj instanceof Collection) {
-			return maybeConvertList((Collection<?>) obj);
+			return maybeConvertList((Collection<?>) obj, typeHint);
 		}
 
 		DBObject newDbo = new BasicDBObject();
 		this.write(obj, newDbo);
-		return removeTypeInfoRecursively(newDbo);
+
+		if (typeInformation == null) {
+			return removeTypeInfoRecursively(newDbo);
+		}
+
+		return !obj.getClass().equals(typeInformation.getType()) ? newDbo : removeTypeInfoRecursively(newDbo);
 	}
 
-	public BasicDBList maybeConvertList(Iterable<?> source) {
+	public BasicDBList maybeConvertList(Iterable<?> source, TypeInformation<?> typeInformation) {
+
 		BasicDBList newDbl = new BasicDBList();
 		for (Object element : source) {
-			newDbl.add(convertToMongoType(element));
+			newDbl.add(convertToMongoType(element, typeInformation));
 		}
+
 		return newDbl;
 	}
 
@@ -899,54 +1069,129 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		return dbObject;
 	}
 
+	/**
+	 * {@link PropertyValueProvider} to evaluate a SpEL expression if present on the property or simply accesses the field
+	 * of the configured source {@link DBObject}.
+	 *
+	 * @author Oliver Gierke
+	 */
 	private class MongoDbPropertyValueProvider implements PropertyValueProvider<MongoPersistentProperty> {
 
-		private final DBObject source;
+		private final DBObjectAccessor source;
 		private final SpELExpressionEvaluator evaluator;
-		private final Object parent;
+		private final ObjectPath path;
 
-		public MongoDbPropertyValueProvider(DBObject source, SpELContext factory, Object parent) {
-			this(source, new DefaultSpELExpressionEvaluator(source, factory), parent);
-		}
-
-		public MongoDbPropertyValueProvider(DBObject source, DefaultSpELExpressionEvaluator evaluator, Object parent) {
+		/**
+		 * Creates a new {@link MongoDbPropertyValueProvider} for the given source, {@link SpELExpressionEvaluator} and
+		 * {@link ObjectPath}.
+		 * 
+		 * @param source must not be {@literal null}.
+		 * @param evaluator must not be {@literal null}.
+		 * @param path can be {@literal null}.
+		 */
+		public MongoDbPropertyValueProvider(DBObject source, SpELExpressionEvaluator evaluator, ObjectPath path) {
 
 			Assert.notNull(source);
 			Assert.notNull(evaluator);
 
-			this.source = source;
+			this.source = new DBObjectAccessor(source);
 			this.evaluator = evaluator;
-			this.parent = parent;
+			this.path = path;
 		}
 
 		/* 
 		 * (non-Javadoc)
 		 * @see org.springframework.data.convert.PropertyValueProvider#getPropertyValue(org.springframework.data.mapping.PersistentProperty)
 		 */
-		@SuppressWarnings("unchecked")
 		public <T> T getPropertyValue(MongoPersistentProperty property) {
 
 			String expression = property.getSpelExpression();
-			Object value = expression != null ? evaluator.evaluate(expression) : source.get(property.getFieldName());
+			Object value = expression != null ? evaluator.evaluate(expression) : source.get(property);
 
 			if (value == null) {
 				return null;
 			}
 
-			TypeInformation<?> type = property.getTypeInformation();
-			Class<?> rawType = type.getType();
-
-			if (conversions.hasCustomReadTarget(value.getClass(), rawType)) {
-				return (T) conversionService.convert(value, rawType);
-			} else if (value instanceof DBRef) {
-				return (T) read(type, ((DBRef) value).fetch(), parent);
-			} else if (value instanceof BasicDBList) {
-				return (T) getPotentiallyConvertedSimpleRead(readCollectionOrArray(type, (BasicDBList) value, parent), rawType);
-			} else if (value instanceof DBObject) {
-				return (T) read(type, (DBObject) value, parent);
-			} else {
-				return (T) getPotentiallyConvertedSimpleRead(value, rawType);
-			}
+			return readValue(value, property.getTypeInformation(), path);
 		}
+	}
+
+	/**
+	 * Extension of {@link SpELExpressionParameterValueProvider} to recursively trigger value conversion on the raw
+	 * resolved SpEL value.
+	 * 
+	 * @author Oliver Gierke
+	 */
+	private class ConverterAwareSpELExpressionParameterValueProvider extends
+			SpELExpressionParameterValueProvider<MongoPersistentProperty> {
+
+		private final ObjectPath path;
+
+		/**
+		 * Creates a new {@link ConverterAwareSpELExpressionParameterValueProvider}.
+		 * 
+		 * @param evaluator must not be {@literal null}.
+		 * @param conversionService must not be {@literal null}.
+		 * @param delegate must not be {@literal null}.
+		 */
+		public ConverterAwareSpELExpressionParameterValueProvider(SpELExpressionEvaluator evaluator,
+				ConversionService conversionService, ParameterValueProvider<MongoPersistentProperty> delegate, ObjectPath path) {
+
+			super(evaluator, conversionService, delegate);
+			this.path = path;
+		}
+
+		/* 
+		 * (non-Javadoc)
+		 * @see org.springframework.data.mapping.model.SpELExpressionParameterValueProvider#potentiallyConvertSpelValue(java.lang.Object, org.springframework.data.mapping.PreferredConstructor.Parameter)
+		 */
+		@Override
+		protected <T> T potentiallyConvertSpelValue(Object object, Parameter<T, MongoPersistentProperty> parameter) {
+			return readValue(object, parameter.getType(), path);
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private <T> T readValue(Object value, TypeInformation<?> type, ObjectPath path) {
+
+		Class<?> rawType = type.getType();
+
+		if (conversions.hasCustomReadTarget(value.getClass(), rawType)) {
+			return (T) conversionService.convert(value, rawType);
+		} else if (value instanceof DBRef) {
+			return potentiallyReadOrResolveDbRef((DBRef) value, type, path, rawType);
+		} else if (value instanceof BasicDBList) {
+			return (T) readCollectionOrArray(type, (BasicDBList) value, path);
+		} else if (value instanceof DBObject) {
+			return (T) read(type, (DBObject) value, path);
+		} else {
+			return (T) getPotentiallyConvertedSimpleRead(value, rawType);
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private <T> T potentiallyReadOrResolveDbRef(DBRef dbref, TypeInformation<?> type, ObjectPath path, Class<?> rawType) {
+
+		if (rawType.equals(DBRef.class)) {
+			return (T) dbref;
+		}
+
+		Object object = dbref == null ? null : path.getPathItem(dbref.getId(), dbref.getRef());
+
+		if (object != null) {
+			return (T) object;
+		}
+
+		return (T) (object != null ? object : read(type, readRef(dbref), path));
+	}
+
+	/**
+	 * Performs the fetch operation for the given {@link DBRef}.
+	 * 
+	 * @param ref
+	 * @return
+	 */
+	DBObject readRef(DBRef ref) {
+		return ref.fetch();
 	}
 }

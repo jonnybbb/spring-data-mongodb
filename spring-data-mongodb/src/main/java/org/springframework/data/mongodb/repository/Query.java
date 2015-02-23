@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,26 @@
  */
 package org.springframework.data.mongodb.repository;
 
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+import org.springframework.data.annotation.QueryAnnotation;
 
 /**
  * Annotation to declare finder queries directly on repository methods. Both attributes allow using a placeholder
  * notation of {@code ?0}, {@code ?1} and so on.
  * 
  * @author Oliver Gierke
+ * @author Thomas Darimont
+ * @author Christoph Strobl
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 @Documented
+@QueryAnnotation
 public @interface Query {
 
 	/**
@@ -43,4 +52,20 @@ public @interface Query {
 	 * @return
 	 */
 	String fields() default "";
+
+	/**
+	 * Returns whether the query defined should be executed as count projection.
+	 * 
+	 * @since 1.3
+	 * @return
+	 */
+	boolean count() default false;
+
+	/**
+	 * Returns whether the query should delete matching documents.
+	 * 
+	 * @since 1.5
+	 * @return
+	 */
+	boolean delete() default false;
 }

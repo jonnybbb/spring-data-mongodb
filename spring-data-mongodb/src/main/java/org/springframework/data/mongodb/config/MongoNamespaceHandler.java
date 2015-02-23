@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,26 +16,27 @@
 package org.springframework.data.mongodb.config;
 
 import org.springframework.beans.factory.xml.NamespaceHandlerSupport;
-import org.springframework.data.mongodb.repository.config.MongoRepositoryConfigParser;
 
 /**
- * {@link org.springframework.beans.factory.xml.NamespaceHandler} for Mongo DB based repositories.
+ * {@link org.springframework.beans.factory.xml.NamespaceHandler} for Mongo DB configuration.
  * 
  * @author Oliver Gierke
+ * @author Martin Baumgartner
  */
 public class MongoNamespaceHandler extends NamespaceHandlerSupport {
 
 	/*
-	* (non-Javadoc)
-	*
-	* @see org.springframework.beans.factory.xml.NamespaceHandler#init()
-	*/
+	 * (non-Javadoc)
+	 * @see org.springframework.beans.factory.xml.NamespaceHandler#init()
+	 */
 	public void init() {
 
-		registerBeanDefinitionParser("repositories", new MongoRepositoryConfigParser());
 		registerBeanDefinitionParser("mapping-converter", new MappingMongoConverterParser());
 		registerBeanDefinitionParser("mongo", new MongoParser());
 		registerBeanDefinitionParser("db-factory", new MongoDbFactoryParser());
 		registerBeanDefinitionParser("jmx", new MongoJmxParser());
+		registerBeanDefinitionParser("auditing", new MongoAuditingBeanDefinitionParser());
+		registerBeanDefinitionParser("template", new MongoTemplateParser());
+		registerBeanDefinitionParser("gridFsTemplate", new GridFsTemplateParser());
 	}
 }

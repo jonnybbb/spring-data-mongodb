@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2011 by the original author(s).
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,12 +16,17 @@
 package org.springframework.data.mongodb.core.mapping;
 
 import org.springframework.core.convert.converter.Converter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mapping.PersistentEntity;
 import org.springframework.data.mapping.PersistentProperty;
 
 /**
- * Mongo specific {@link org.springframework.data.mapping.PersistentProperty} implementation.
+ * MongoDB specific {@link org.springframework.data.mapping.PersistentProperty} extension.
  * 
  * @author Oliver Gierke
+ * @author Patryk Wasik
+ * @author Thomas Darimont
+ * @author Christoph Strobl
  */
 public interface MongoPersistentProperty extends PersistentProperty<MongoPersistentProperty> {
 
@@ -48,6 +53,40 @@ public interface MongoPersistentProperty extends PersistentProperty<MongoPersist
 	boolean isDbReference();
 
 	/**
+	 * Returns whether the property is explicitly marked as an identifier property of the owning {@link PersistentEntity}.
+	 * A property is an explicit id property if it is annotated with @see {@link Id}.
+	 * 
+	 * @return
+	 */
+	boolean isExplicitIdProperty();
+
+	/**
+	 * Returns true whether the property indicates the documents language either by having a {@link #getFieldName()} equal
+	 * to {@literal language} or being annotated with {@link Language}.
+	 * 
+	 * @return
+	 * @since 1.6
+	 */
+	boolean isLanguageProperty();
+
+	/**
+	 * Returns true when property being annotated with {@link Language}.
+	 * 
+	 * @return
+	 * @since 1.6.1
+	 */
+	boolean isExplicitLanguageProperty();
+
+	/**
+	 * Returns whether the property holds the documents score calculated by text search. <br/>
+	 * It's marked with {@link TextScore}.
+	 * 
+	 * @return
+	 * @since 1.6
+	 */
+	boolean isTextScoreProperty();
+
+	/**
 	 * Returns the {@link DBRef} if the property is a reference.
 	 * 
 	 * @see #isDbReference()
@@ -72,4 +111,12 @@ public interface MongoPersistentProperty extends PersistentProperty<MongoPersist
 			return source.getFieldName();
 		}
 	}
+
+	/**
+	 * Returns whether property access shall be used for reading the property value. This means it will use the getter
+	 * instead of field access.
+	 * 
+	 * @return
+	 */
+	boolean usePropertyAccess();
 }

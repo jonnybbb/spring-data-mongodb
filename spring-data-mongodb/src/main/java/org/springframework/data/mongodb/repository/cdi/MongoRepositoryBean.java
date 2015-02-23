@@ -1,5 +1,5 @@
 /*
- * Copyright 2012 the original author or authors.
+ * Copyright 2012-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,12 +25,14 @@ import javax.enterprise.inject.spi.BeanManager;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.repository.support.MongoRepositoryFactory;
 import org.springframework.data.repository.cdi.CdiRepositoryBean;
+import org.springframework.data.repository.config.CustomRepositoryImplementationDetector;
 import org.springframework.util.Assert;
 
 /**
  * {@link CdiRepositoryBean} to create Mongo repository instances.
  * 
  * @author Oliver Gierke
+ * @author Mark Paluch
  */
 public class MongoRepositoryBean<T> extends CdiRepositoryBean<T> {
 
@@ -43,11 +45,13 @@ public class MongoRepositoryBean<T> extends CdiRepositoryBean<T> {
 	 * @param qualifiers must not be {@literal null}.
 	 * @param repositoryType must not be {@literal null}.
 	 * @param beanManager must not be {@literal null}.
+	 * @param detector detector for the custom {@link org.springframework.data.repository.Repository} implementations
+	 *          {@link CustomRepositoryImplementationDetector}, can be {@literal null}.
 	 */
 	public MongoRepositoryBean(Bean<MongoOperations> operations, Set<Annotation> qualifiers, Class<T> repositoryType,
-			BeanManager beanManager) {
+			BeanManager beanManager, CustomRepositoryImplementationDetector detector) {
 
-		super(qualifiers, repositoryType, beanManager);
+		super(qualifiers, repositoryType, beanManager, detector);
 
 		Assert.notNull(operations);
 		this.operations = operations;
@@ -55,22 +59,14 @@ public class MongoRepositoryBean<T> extends CdiRepositoryBean<T> {
 
 	/* 
 	 * (non-Javadoc)
-	 * @see javax.enterprise.inject.spi.Bean#getScope()
-	 */
-	public Class<? extends Annotation> getScope() {
-		return operations.getScope();
-	}
-
-	/* 
-	 * (non-Javadoc)
 	 * @see org.springframework.data.repository.cdi.CdiRepositoryBean#create(javax.enterprise.context.spi.CreationalContext, java.lang.Class)
 	 */
 	@Override
-	protected T create(CreationalContext<T> creationalContext, Class<T> repositoryType) {
+	protected T create(CreationalContext<T> creationalContext, Class<T> repositoryType, Object customImplementation) {
 
 		MongoOperations mongoOperations = getDependencyInstance(operations, MongoOperations.class);
 		MongoRepositoryFactory factory = new MongoRepositoryFactory(mongoOperations);
 
-		return factory.getRepository(repositoryType);
+		return factory.getRepository(repositoryType, customImplementation);
 	}
 }

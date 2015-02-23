@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2011 by the original author(s).
+ * Copyright 2011-2013 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.springframework.data.mongodb.core.mapping;
 
 import static org.hamcrest.Matchers.*;
@@ -25,72 +24,37 @@ import static org.springframework.data.mongodb.core.query.Update.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.bson.types.ObjectId;
-import org.junit.Before;
 import org.junit.Test;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Sort.Direction;
 import org.springframework.data.mongodb.MongoCollectionUtils;
+import org.springframework.data.mongodb.config.AbstractIntegrationTests;
 import org.springframework.data.mongodb.core.CollectionCallback;
-import org.springframework.data.mongodb.core.MongoDbUtils;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Order;
 import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import com.mongodb.DB;
 import com.mongodb.DBCollection;
 import com.mongodb.DBObject;
-import com.mongodb.Mongo;
 import com.mongodb.MongoException;
 
 /**
- * @author Jon Brisbin <jbrisbin@vmware.com>
+ * @author Jon Brisbin
+ * @author Oliver Gierke
+ * @author Thomas Darimont
  */
-public class MappingTests {
+public class MappingTests extends AbstractIntegrationTests {
 
-	private static final Log LOGGER = LogFactory.getLog(MongoDbUtils.class);
-	private final String[] collectionsToDrop = new String[] {
-			MongoCollectionUtils.getPreferredCollectionName(Person.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonMapProperty.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonWithObjectId.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonPojoIntId.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonPojoLongId.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonPojoStringId.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonCustomIdName.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonMultiDimArrays.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonMultiCollection.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonWithDbRef.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonWithLongDBRef.class),
-			MongoCollectionUtils.getPreferredCollectionName(PersonNullProperties.class),
-			MongoCollectionUtils.getPreferredCollectionName(Account.class),
-			MongoCollectionUtils.getPreferredCollectionName(PrimitiveId.class), "foobar", "geolocation", "person1",
-			"person2", "account" };
-
-	ApplicationContext applicationContext;
-	Mongo mongo;
-	MongoTemplate template;
-	MongoMappingContext mappingContext;
-
-	@Before
-	public void setUp() throws Exception {
-		mongo = new Mongo();
-		DB db = mongo.getDB("database");
-		for (String coll : collectionsToDrop) {
-			db.getCollection(coll).drop();
-		}
-		applicationContext = new ClassPathXmlApplicationContext("/mapping.xml");
-		template = applicationContext.getBean(MongoTemplate.class);
-		mappingContext = (MongoMappingContext) ReflectionTestUtils.getField(template, "mappingContext");
-	}
+	@Autowired MongoOperations template;
 
 	@Test
 	public void testGeneratedId() {
@@ -103,11 +67,8 @@ public class MappingTests {
 	@Test
 	public void testPersonPojo() throws Exception {
 
-		LOGGER.info("about to create new personpojo");
 		PersonWithObjectId p = new PersonWithObjectId(12345, "Person", "Pojo");
-		LOGGER.info("about to insert");
 		template.insert(p);
-		LOGGER.info("done inserting");
 		assertNotNull(p.getId());
 
 		List<PersonWithObjectId> result = template.find(new Query(Criteria.where("ssn").is(12345)),
@@ -202,9 +163,10 @@ public class MappingTests {
 		assertThat(result.get(0).getAccounts(), notNullValue());
 	}
 
-	@Test
+	@Test(expected = DuplicateKeyException.class)
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public void testUniqueIndex() {
+
 		Address addr = new Address();
 		addr.setLines(new String[] { "1234 W. 1st Street", "Apt. 12" });
 		addr.setCity("Anytown");
@@ -214,13 +176,7 @@ public class MappingTests {
 		Person p1 = new Person(1234567890, "John", "Doe", 37, addr);
 		Person p2 = new Person(1234567890, "Jane", "Doe", 38, addr);
 
-		List<Person> persons = new ArrayList<Person>();
-		persons.add(p1);
-		persons.add(p2);
-		template.insert(persons, MongoCollectionUtils.getPreferredCollectionName(Person.class));
-
-		List<Person> result = template.find(new Query(Criteria.where("ssn").is(1234567890)), Person.class);
-		assertThat(result.size(), is(1));
+		template.insertAll(Arrays.asList(p1, p2));
 	}
 
 	@Test
@@ -464,7 +420,7 @@ public class MappingTests {
 		template.insert(p4);
 
 		Query q = query(where("id").in("1", "2"));
-		q.sort().on("id", Order.ASCENDING);
+		q.with(new Sort(Direction.ASC, "id"));
 		List<PersonPojoStringId> people = template.find(q, PersonPojoStringId.class);
 		assertEquals(2, people.size());
 
@@ -511,28 +467,96 @@ public class MappingTests {
 		assertThat(result.items.get(0).id, is(items.id));
 	}
 
+	/**
+	 * @see DATAMONGO-805
+	 */
+	@Test
+	public void supportExcludeDbRefAssociation() {
+
+		template.dropCollection(Item.class);
+		template.dropCollection(Container.class);
+
+		Item item = new Item();
+		template.insert(item);
+
+		Container container = new Container("foo");
+		container.item = item;
+
+		template.insert(container);
+
+		Query query = new Query(Criteria.where("id").is("foo"));
+		query.fields().exclude("item");
+		Container result = template.findOne(query, Container.class);
+
+		assertThat(result, is(notNullValue()));
+		assertThat(result.item, is(nullValue()));
+	}
+
+	/**
+	 * @see DATAMONGO-805
+	 */
+	@Test
+	public void shouldMapFieldsOfIterableEntity() {
+
+		template.dropCollection(IterableItem.class);
+		template.dropCollection(Container.class);
+
+		Item item = new IterableItem();
+		item.value = "bar";
+		template.insert(item);
+
+		Container container = new Container("foo");
+		container.item = item;
+
+		template.insert(container);
+
+		Query query = new Query(Criteria.where("id").is("foo"));
+		Container result = template.findOne(query, Container.class);
+
+		assertThat(result, is(notNullValue()));
+		assertThat(result.item, is(notNullValue()));
+		assertThat(result.item.value, is("bar"));
+	}
+
 	static class Container {
 
-		@Id
-		final String id;
+		@Id final String id;
 
 		public Container() {
 			id = new ObjectId().toString();
 		}
 
-		@DBRef
-		Item item;
-		@DBRef
-		List<Item> items;
+		public Container(String id) {
+			this.id = id;
+		}
+
+		@DBRef Item item;
+		@DBRef List<Item> items;
 	}
 
 	static class Item {
 
-		@Id
-		final String id;
+		@Id final String id;
+		String value;
 
 		public Item() {
 			this.id = new ObjectId().toString();
 		}
+	}
+
+	static class IterableItem extends Item implements Iterable<ItemData> {
+
+		List<ItemData> data = new ArrayList<MappingTests.ItemData>();
+
+		@Override
+		public Iterator<ItemData> iterator() {
+			return data.iterator();
+		}
+	}
+
+	static class ItemData {
+
+		String id;
+		String value;
 	}
 }

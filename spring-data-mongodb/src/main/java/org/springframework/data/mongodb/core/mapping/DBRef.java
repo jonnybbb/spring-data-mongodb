@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2012 by the original author(s).
+ * Copyright 2011-2013 by the original author(s).
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import org.springframework.data.annotation.Reference;
  * 
  * @author Jon Brisbin
  * @author Oliver Gierke
+ * @author Thomas Darimont
  * @author Maciej Walkowiak
  */
 @Documented
@@ -49,4 +50,11 @@ public @interface DBRef {
 	 * @return
 	 */
 	CascadeType cascadeType() default CascadeType.NONE;
+
+	/**
+	 * Controls whether the referenced entity should be loaded lazily. This defaults to {@literal false}.
+	 * 
+	 * @return
+	 */
+	boolean lazy() default false;
 }

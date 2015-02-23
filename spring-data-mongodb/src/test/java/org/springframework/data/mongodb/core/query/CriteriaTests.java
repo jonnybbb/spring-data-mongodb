@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2011 the original author or authors.
+ * Copyright 2010-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,21 @@
  */
 package org.springframework.data.mongodb.core.query;
 
-import static org.junit.Assert.*;
 import static org.hamcrest.CoreMatchers.*;
+import static org.junit.Assert.*;
+
 import org.junit.Test;
 import org.springframework.data.mongodb.InvalidMongoDbApiUsageException;
-import org.springframework.data.mongodb.core.query.Criteria;
 
 import com.mongodb.BasicDBObject;
+import com.mongodb.BasicDBObjectBuilder;
 import com.mongodb.DBObject;
 
+/**
+ * @author Oliver Gierke
+ * @author Thomas Darimont
+ * @author Christoph Strobl
+ */
 public class CriteriaTests {
 
 	@Test
@@ -57,5 +63,105 @@ public class CriteriaTests {
 	public void testCriteriaWithMultipleConditionsForSameKey() {
 		Criteria c = new Criteria("name").gte("M").and("name").ne("A");
 		c.getCriteriaObject();
+	}
+
+	@Test
+	public void equalIfCriteriaMatches() {
+
+		Criteria left = new Criteria("name").is("Foo").and("lastname").is("Bar");
+		Criteria right = new Criteria("name").is("Bar").and("lastname").is("Bar");
+
+		assertThat(left, is(not(right)));
+		assertThat(right, is(not(left)));
+	}
+
+	/**
+	 * @see DATAMONGO-507
+	 */
+	@Test(expected = IllegalArgumentException.class)
+	public void shouldThrowExceptionWhenTryingToNegateAndOperation() {
+
+		new Criteria() //
+				.not() //
+				.andOperator(Criteria.where("delete").is(true).and("_id").is(42)); //
+	}
+
+	/**
+	 * @see DATAMONGO-507
+	 */
+	@Test(expected = IllegalArgumentException.class)
+	public void shouldThrowExceptionWhenTryingToNegateOrOperation() {
+
+		new Criteria() //
+				.not() //
+				.orOperator(Criteria.where("delete").is(true).and("_id").is(42)); //
+	}
+
+	/**
+	 * @see DATAMONGO-507
+	 */
+	@Test(expected = IllegalArgumentException.class)
+	public void shouldThrowExceptionWhenTryingToNegateNorOperation() {
+
+		new Criteria() //
+				.not() //
+				.norOperator(Criteria.where("delete").is(true).and("_id").is(42)); //
+	}
+
+	/**
+	 * @see DATAMONGO-507
+	 */
+	@Test
+	public void shouldNegateFollowingSimpleExpression() {
+
+		Criteria c = Criteria.where("age").not().gt(18).and("status").is("student");
+		DBObject co = c.getCriteriaObject();
+
+		assertThat(co, is(notNullValue()));
+		assertThat(co.toString(), is("{ \"age\" : { \"$not\" : { \"$gt\" : 18}} , \"status\" : \"student\"}"));
+	}
+
+	/**
+	 * @see DATAMONGO-1068
+	 */
+	@Test
+	public void getCriteriaObjectShouldReturnEmptyDBOWhenNoCriteriaSpecified() {
+
+		DBObject dbo = new Criteria().getCriteriaObject();
+
+		assertThat(dbo, equalTo(new BasicDBObjectBuilder().get()));
+	}
+
+	/**
+	 * @see DATAMONGO-1068
+	 */
+	@Test
+	public void getCriteriaObjectShouldUseCritieraValuesWhenNoKeyIsPresent() {
+
+		DBObject dbo = new Criteria().lt("foo").getCriteriaObject();
+
+		assertThat(dbo, equalTo(new BasicDBObjectBuilder().add("$lt", "foo").get()));
+	}
+
+	/**
+	 * @see DATAMONGO-1068
+	 */
+	@Test
+	public void getCriteriaObjectShouldUseCritieraValuesWhenNoKeyIsPresentButMultipleCriteriasPresent() {
+
+		DBObject dbo = new Criteria().lt("foo").gt("bar").getCriteriaObject();
+
+		assertThat(dbo, equalTo(new BasicDBObjectBuilder().add("$lt", "foo").add("$gt", "bar").get()));
+	}
+
+	/**
+	 * @see DATAMONGO-1068
+	 */
+	@Test
+	public void getCriteriaObjectShouldRespectNotWhenNoKeyPresent() {
+
+		DBObject dbo = new Criteria().lt("foo").not().getCriteriaObject();
+
+		assertThat(dbo, equalTo(new BasicDBObjectBuilder().add("$not", new BasicDBObject("$lt", "foo")).get()));
 	}
 }

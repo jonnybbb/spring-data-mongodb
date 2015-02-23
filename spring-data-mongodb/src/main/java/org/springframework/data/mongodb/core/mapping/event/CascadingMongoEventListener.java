@@ -145,7 +145,7 @@ public class CascadingMongoEventListener extends AbstractMongoEventListener {
 		private Object getReferredObject(MongoPersistentProperty mongoPersistentProperty) {
 			ConversionService service = mongoConverter.getConversionService();
 
-			return BeanWrapper.create(source, service).getProperty(mongoPersistentProperty, Object.class, true);
+			return BeanWrapper.create(source, service).getProperty(mongoPersistentProperty, Object.class);
 		}
 
 		abstract boolean isAppliable(DBRef dbRef);

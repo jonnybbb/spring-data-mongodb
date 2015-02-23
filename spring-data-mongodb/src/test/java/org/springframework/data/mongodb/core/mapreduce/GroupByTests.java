@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,11 @@
  */
 package org.springframework.data.mongodb.core.mapreduce;
 
+import static org.hamcrest.CoreMatchers.*;
+import static org.junit.Assert.*;
+import static org.springframework.data.mongodb.core.mapreduce.GroupBy.*;
+import static org.springframework.data.mongodb.core.query.Criteria.*;
+
 import java.util.Arrays;
 import java.util.HashSet;
 
@@ -27,6 +32,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.data.mongodb.MongoDbFactory;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.convert.DbRefResolver;
+import org.springframework.data.mongodb.core.convert.DefaultDbRefResolver;
 import org.springframework.data.mongodb.core.convert.MappingMongoConverter;
 import org.springframework.data.mongodb.core.mapping.MongoMappingContext;
 import org.springframework.test.context.ContextConfiguration;
@@ -37,37 +44,35 @@ import com.mongodb.DBCollection;
 import com.mongodb.DBObject;
 import com.mongodb.Mongo;
 
-import static org.springframework.data.mongodb.core.query.Criteria.*;
-import static org.springframework.data.mongodb.core.mapreduce.GroupBy.*;
-
+/**
+ * Integration tests for group-by operations.
+ * 
+ * @author Mark Pollack
+ * @author Oliver Gierke
+ * @author Christoph Strobl
+ */
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("classpath:infrastructure.xml")
 public class GroupByTests {
 
-	@Autowired
-	MongoDbFactory factory;
-
-	@Autowired
-	ApplicationContext applicationContext;
-
-	// @Autowired
-	// MongoTemplate mongoTemplate;
+	@Autowired MongoDbFactory factory;
+	@Autowired ApplicationContext applicationContext;
 
 	MongoTemplate mongoTemplate;
 
 	@Autowired
-	@SuppressWarnings("unchecked")
 	public void setMongo(Mongo mongo) throws Exception {
 
 		MongoMappingContext mappingContext = new MongoMappingContext();
 		mappingContext.setInitialEntitySet(new HashSet<Class<?>>(Arrays.asList(XObject.class)));
-		mappingContext.afterPropertiesSet();
+		mappingContext.initialize();
 
-		MappingMongoConverter mappingConverter = new MappingMongoConverter(factory, mappingContext);
+		DbRefResolver dbRefResolver = new DefaultDbRefResolver(factory);
+		MappingMongoConverter mappingConverter = new MappingMongoConverter(dbRefResolver, mappingContext);
 		mappingConverter.afterPropertiesSet();
+
 		this.mongoTemplate = new MongoTemplate(factory, mappingConverter);
 		mongoTemplate.setApplicationContext(applicationContext);
-
 	}
 
 	@Before
@@ -87,49 +92,46 @@ public class GroupByTests {
 
 	@Test
 	public void singleKeyCreation() {
+
 		DBObject gc = new GroupBy("a").getGroupByObject();
-		// String expected =
-		// "{ \"group\" : { \"ns\" : \"test\" , \"key\" : { \"a\" : 1} , \"cond\" :  null  , \"$reduce\" :  null  , \"initial\" :  null }}";
-		String expected = "{ \"key\" : { \"a\" : 1} , \"$reduce\" :  null  , \"initial\" :  null }";
-		Assert.assertEquals(expected, gc.toString());
+
+		assertThat(gc.toString(), is("{ \"key\" : { \"a\" : 1} , \"$reduce\" :  null  , \"initial\" :  null }"));
 	}
 
 	@Test
 	public void multipleKeyCreation() {
+
 		DBObject gc = GroupBy.key("a", "b").getGroupByObject();
-		// String expected =
-		// "{ \"group\" : { \"ns\" : \"test\" , \"key\" : { \"a\" : 1 , \"b\" : 1} , \"cond\" :  null  , \"$reduce\" :  null  , \"initial\" :  null }}";
-		String expected = "{ \"key\" : { \"a\" : 1 , \"b\" : 1} , \"$reduce\" :  null  , \"initial\" :  null }";
-		Assert.assertEquals(expected, gc.toString());
+
+		assertThat(gc.toString(), is("{ \"key\" : { \"a\" : 1 , \"b\" : 1} , \"$reduce\" :  null  , \"initial\" :  null }"));
 	}
 
 	@Test
 	public void keyFunctionCreation() {
+
 		DBObject gc = GroupBy.keyFunction("classpath:keyFunction.js").getGroupByObject();
-		String expected = "{ \"$keyf\" : \"classpath:keyFunction.js\" , \"$reduce\" :  null  , \"initial\" :  null }";
-		Assert.assertEquals(expected, gc.toString());
+
+		assertThat(gc.toString(),
+				is("{ \"$keyf\" : \"classpath:keyFunction.js\" , \"$reduce\" :  null  , \"initial\" :  null }"));
 	}
 
 	@Test
-	public void SimpleGroup() {
-		createGroupByData();
-		GroupByResults<XObject> results;
+	public void simpleGroupFunction() {
 
-		results = mongoTemplate.group(
+		createGroupByData();
+		GroupByResults<XObject> results = mongoTemplate.group(
 				"group_test_collection",
 				GroupBy.key("x").initialDocument(new BasicDBObject("count", 0))
 						.reduceFunction("function(doc, prev) { prev.count += 1 }"), XObject.class);
 
 		assertMapReduceResults(results);
-
 	}
 
 	@Test
-	public void SimpleGroupWithKeyFunction() {
-		createGroupByData();
-		GroupByResults<XObject> results;
+	public void simpleGroupWithKeyFunction() {
 
-		results = mongoTemplate.group(
+		createGroupByData();
+		GroupByResults<XObject> results = mongoTemplate.group(
 				"group_test_collection",
 				GroupBy.keyFunction("function(doc) { return { x : doc.x }; }").initialDocument("{ count: 0 }")
 						.reduceFunction("function(doc, prev) { prev.count += 1 }"), XObject.class);
@@ -138,31 +140,36 @@ public class GroupByTests {
 	}
 
 	@Test
-	public void SimpleGroupWithFunctionsAsResources() {
-		createGroupByData();
-		GroupByResults<XObject> results;
+	public void simpleGroupWithFunctionsAsResources() {
 
-		results = mongoTemplate.group("group_test_collection", GroupBy.keyFunction("classpath:keyFunction.js")
-				.initialDocument("{ count: 0 }").reduceFunction("classpath:groupReduce.js"), XObject.class);
+		createGroupByData();
+		GroupByResults<XObject> results = mongoTemplate.group(
+				"group_test_collection",
+				GroupBy.keyFunction("classpath:keyFunction.js").initialDocument("{ count: 0 }")
+						.reduceFunction("classpath:groupReduce.js"), XObject.class);
 
 		assertMapReduceResults(results);
 	}
 
 	@Test
-	public void SimpleGroupWithQueryAndFunctionsAsResources() {
-		createGroupByData();
-		GroupByResults<XObject> results;
+	public void simpleGroupWithQueryAndFunctionsAsResources() {
 
-		results = mongoTemplate.group(where("x").gt(0), "group_test_collection", keyFunction("classpath:keyFunction.js")
-				.initialDocument("{ count: 0 }").reduceFunction("classpath:groupReduce.js"), XObject.class);
+		createGroupByData();
+		GroupByResults<XObject> results = mongoTemplate.group(
+				where("x").gt(0),
+				"group_test_collection",
+				keyFunction("classpath:keyFunction.js").initialDocument("{ count: 0 }").reduceFunction(
+						"classpath:groupReduce.js"), XObject.class);
 
 		assertMapReduceResults(results);
 	}
 
 	private void assertMapReduceResults(GroupByResults<XObject> results) {
+
 		DBObject dboRawResults = results.getRawResults();
-		String expected = "{ \"serverUsed\" : \"127.0.0.1:27017\" , \"retval\" : [ { \"x\" : 1.0 , \"count\" : 2.0} , { \"x\" : 2.0 , \"count\" : 1.0} , { \"x\" : 3.0 , \"count\" : 3.0}] , \"count\" : 6.0 , \"keys\" : 3 , \"ok\" : 1.0}";
-		Assert.assertEquals(expected, dboRawResults.toString());
+
+		assertThat(dboRawResults.containsField("serverUsed"), is(true));
+		assertThat(dboRawResults.get("serverUsed").toString(), endsWith("127.0.0.1:27017"));
 
 		int numResults = 0;
 		for (XObject xObject : results) {
@@ -177,13 +184,15 @@ public class GroupByTests {
 			}
 			numResults++;
 		}
-		Assert.assertEquals(3, numResults);
-		Assert.assertEquals(6, results.getCount(), 0.001);
-		Assert.assertEquals(3, results.getKeys());
+		assertThat(numResults, is(3));
+		assertThat(results.getKeys(), is(3));
+		assertEquals(6, results.getCount(), 0.001);
 	}
 
 	private void createGroupByData() {
+
 		DBCollection c = mongoTemplate.getDb().getCollection("group_test_collection");
+
 		c.save(new BasicDBObject("x", 1));
 		c.save(new BasicDBObject("x", 1));
 		c.save(new BasicDBObject("x", 2));
@@ -191,5 +200,4 @@ public class GroupByTests {
 		c.save(new BasicDBObject("x", 3));
 		c.save(new BasicDBObject("x", 3));
 	}
-
 }

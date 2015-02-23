@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@ package org.springframework.data.mongodb.crossstore;
 
 import javax.persistence.EntityManagerFactory;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -34,20 +34,20 @@ import com.mongodb.DBCollection;
 import com.mongodb.DBObject;
 import com.mongodb.MongoException;
 
+/**
+ * @author Thomas Risberg
+ * @author Oliver Gierke
+ */
 public class MongoChangeSetPersister implements ChangeSetPersister<Object> {
 
 	private static final String ENTITY_CLASS = "_entity_class";
-
 	private static final String ENTITY_ID = "_entity_id";
-
 	private static final String ENTITY_FIELD_NAME = "_entity_field_name";
-
 	private static final String ENTITY_FIELD_CLASS = "_entity_field_class";
 
-	protected final Log log = LogFactory.getLog(getClass());
+	protected final Logger log = LoggerFactory.getLogger(getClass());
 
 	private MongoTemplate mongoTemplate;
-
 	private EntityManagerFactory entityManagerFactory;
 
 	public void setMongoTemplate(MongoTemplate mongoTemplate) {
@@ -58,6 +58,10 @@ public class MongoChangeSetPersister implements ChangeSetPersister<Object> {
 		this.entityManagerFactory = entityManagerFactory;
 	}
 
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.crossstore.ChangeSetPersister#getPersistentState(java.lang.Class, java.lang.Object, org.springframework.data.crossstore.ChangeSet)
+	 */
 	public void getPersistentState(Class<? extends ChangeSetBacked> entityClass, Object id, final ChangeSet changeSet)
 			throws DataAccessException, NotFoundException {
 
@@ -100,15 +104,25 @@ public class MongoChangeSetPersister implements ChangeSetPersister<Object> {
 		});
 	}
 
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.crossstore.ChangeSetPersister#getPersistentId(org.springframework.data.crossstore.ChangeSetBacked, org.springframework.data.crossstore.ChangeSet)
+	 */
 	public Object getPersistentId(ChangeSetBacked entity, ChangeSet cs) throws DataAccessException {
+
 		log.debug("getPersistentId called on " + entity);
+
 		if (entityManagerFactory == null) {
 			throw new DataAccessResourceFailureException("EntityManagerFactory cannot be null");
 		}
-		Object o = entityManagerFactory.getPersistenceUnitUtil().getIdentifier(entity);
-		return o;
+
+		return entityManagerFactory.getPersistenceUnitUtil().getIdentifier(entity);
 	}
 
+	/*
+	 * (non-Javadoc)
+	 * @see org.springframework.data.crossstore.ChangeSetPersister#persistState(org.springframework.data.crossstore.ChangeSetBacked, org.springframework.data.crossstore.ChangeSet)
+	 */
 	public Object persistState(ChangeSetBacked entity, ChangeSet cs) throws DataAccessException {
 		if (cs == null) {
 			log.debug("Flush: changeset was null, nothing to flush.");
@@ -169,8 +183,13 @@ public class MongoChangeSetPersister implements ChangeSetPersister<Object> {
 		return 0L;
 	}
 
+	/**
+	 * Returns the collection the given entity type shall be persisted to.
+	 * 
+	 * @param entityClass must not be {@literal null}.
+	 * @return
+	 */
 	private String getCollectionNameForEntity(Class<? extends ChangeSetBacked> entityClass) {
-		return ClassUtils.getQualifiedName(entityClass);
+		return mongoTemplate.getCollectionName(entityClass);
 	}
-
 }

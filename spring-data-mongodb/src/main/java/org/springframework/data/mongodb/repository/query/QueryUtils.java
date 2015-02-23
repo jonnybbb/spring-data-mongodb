@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2011 the original author or authors.
+ * Copyright 2010-2013 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,17 +15,16 @@
  */
 package org.springframework.data.mongodb.repository.query;
 
-import com.mongodb.DBCursor;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.data.domain.Sort.Order;
-import org.springframework.data.mongodb.core.query.Query;
+
+import com.mongodb.DBCursor;
 
 /**
  * Collection of utility methods to apply sorting and pagination to a {@link DBCursor}.
  * 
  * @author Oliver Gierke
  */
+@Deprecated
 public abstract class QueryUtils {
 
 	private QueryUtils() {
@@ -33,47 +32,13 @@ public abstract class QueryUtils {
 	}
 
 	/**
-	 * Applies the given {@link Pageable} to the given {@link Query}. Will do nothing if {@link Pageable} is
-	 * {@literal null}.
+	 * Turns an {@link Order} into an {@link org.springframework.data.mongodb.core.query.Order}.
 	 * 
-	 * @param query
-	 * @param pageable
+	 * @deprecated use {@link Order} directly.
+	 * @param order
 	 * @return
 	 */
-	public static Query applyPagination(Query query, Pageable pageable) {
-
-		if (pageable == null) {
-			return query;
-		}
-
-		query.limit(pageable.getPageSize());
-		query.skip(pageable.getOffset());
-
-		return applySorting(query, pageable.getSort());
-	}
-
-	/**
-	 * Applies the given {@link Sort} to the {@link Query}. Will do nothing if {@link Sort} is {@literal null}.
-	 * 
-	 * @param query
-	 * @param sort
-	 * @return
-	 */
-	public static Query applySorting(Query query, Sort sort) {
-
-		if (sort == null) {
-			return query;
-		}
-
-		org.springframework.data.mongodb.core.query.Sort bSort = query.sort();
-
-		for (Order order : sort) {
-			bSort.on(order.getProperty(), toOrder(order));
-		}
-
-		return query;
-	}
-
+	@Deprecated
 	public static org.springframework.data.mongodb.core.query.Order toOrder(Order order) {
 		return order.isAscending() ? org.springframework.data.mongodb.core.query.Order.ASCENDING
 				: org.springframework.data.mongodb.core.query.Order.DESCENDING;

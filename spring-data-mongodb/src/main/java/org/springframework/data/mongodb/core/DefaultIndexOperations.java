@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 the original author or authors.
+ * Copyright 2011-2014 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +15,17 @@
  */
 package org.springframework.data.mongodb.core;
 
+import static org.springframework.data.domain.Sort.Direction.*;
+
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.mongodb.core.index.IndexDefinition;
 import org.springframework.data.mongodb.core.index.IndexField;
 import org.springframework.data.mongodb.core.index.IndexInfo;
-import org.springframework.data.mongodb.core.query.Order;
 import org.springframework.util.Assert;
 
 import com.mongodb.DBCollection;
@@ -34,8 +37,14 @@ import com.mongodb.MongoException;
  * 
  * @author Mark Pollack
  * @author Oliver Gierke
+ * @author Komi Innocent
+ * @author Christoph Strobl
  */
 public class DefaultIndexOperations implements IndexOperations {
+
+	private static final Double ONE = Double.valueOf(1);
+	private static final Double MINUS_ONE = Double.valueOf(-1);
+	private static final Collection<String> TWO_D_IDENTIFIERS = Arrays.asList("2d", "2dsphere");
 
 	private final MongoOperations mongoOperations;
 	private final String collectionName;
@@ -135,12 +144,24 @@ public class DefaultIndexOperations implements IndexOperations {
 
 						Object value = keyDbObject.get(key);
 
-						if (Integer.valueOf(1).equals(value)) {
-							indexFields.add(IndexField.create(key, Order.ASCENDING));
-						} else if (Integer.valueOf(-1).equals(value)) {
-							indexFields.add(IndexField.create(key, Order.DESCENDING));
-						} else if ("2d".equals(value)) {
+						if (TWO_D_IDENTIFIERS.contains(value)) {
 							indexFields.add(IndexField.geo(key));
+						} else if ("text".equals(value)) {
+
+							DBObject weights = (DBObject) ix.get("weights");
+							for (String fieldName : weights.keySet()) {
+								indexFields.add(IndexField.text(fieldName, Float.valueOf(weights.get(fieldName).toString())));
+							}
+
+						} else {
+
+							Double keyValue = new Double(value.toString());
+
+							if (ONE.equals(keyValue)) {
+								indexFields.add(IndexField.create(key, ASC));
+							} else if (MINUS_ONE.equals(keyValue)) {
+								indexFields.add(IndexField.create(key, DESC));
+							}
 						}
 					}
 
@@ -149,8 +170,8 @@ public class DefaultIndexOperations implements IndexOperations {
 					boolean unique = ix.containsField("unique") ? (Boolean) ix.get("unique") : false;
 					boolean dropDuplicates = ix.containsField("dropDups") ? (Boolean) ix.get("dropDups") : false;
 					boolean sparse = ix.containsField("sparse") ? (Boolean) ix.get("sparse") : false;
-
-					indexInfoList.add(new IndexInfo(indexFields, name, unique, dropDuplicates, sparse));
+					String language = ix.containsField("default_language") ? (String) ix.get("default_language") : "";
+					indexInfoList.add(new IndexInfo(indexFields, name, unique, dropDuplicates, sparse, language));
 				}
 
 				return indexInfoList;

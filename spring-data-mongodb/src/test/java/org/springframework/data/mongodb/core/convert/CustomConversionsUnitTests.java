@@ -1,21 +1,41 @@
+/*
+ * Copyright 2011-2014 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.springframework.data.mongodb.core.convert;
 
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
 
+import java.net.URL;
 import java.text.DateFormat;
 import java.text.Format;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.Locale;
 import java.util.UUID;
 
 import org.bson.types.Binary;
 import org.bson.types.ObjectId;
+import org.joda.time.DateTime;
 import org.junit.Test;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.core.convert.support.GenericConversionService;
 import org.springframework.data.mongodb.core.convert.MongoConverters.StringToBigIntegerConverter;
+import org.threeten.bp.LocalDateTime;
 
 import com.mongodb.DBRef;
 
@@ -23,6 +43,7 @@ import com.mongodb.DBRef;
  * Unit tests for {@link CustomConversions}.
  * 
  * @author Oliver Gierke
+ * @auhtor Christoph Strobl
  */
 public class CustomConversionsUnitTests {
 
@@ -99,7 +120,6 @@ public class CustomConversionsUnitTests {
 	public void populatesConversionServiceCorrectly() {
 
 		GenericConversionService conversionService = new DefaultConversionService();
-		assertThat(conversionService.canConvert(String.class, UUID.class), is(false));
 
 		CustomConversions conversions = new CustomConversions(Arrays.asList(StringToFormatConverter.INSTANCE));
 		conversions.registerConvertersIn(conversionService);
@@ -152,6 +172,100 @@ public class CustomConversionsUnitTests {
 		assertThat(conversions.isSimpleType(Binary.class), is(true));
 	}
 
+	/**
+	 * @see DATAMONGO-462
+	 */
+	@Test
+	public void hasWriteConverterForURL() {
+
+		CustomConversions conversions = new CustomConversions();
+		assertThat(conversions.hasCustomWriteTarget(URL.class), is(true));
+	}
+
+	/**
+	 * @see DATAMONGO-462
+	 */
+	@Test
+	public void readTargetForURL() {
+		CustomConversions conversions = new CustomConversions();
+		assertThat(conversions.hasCustomReadTarget(String.class, URL.class), is(true));
+	}
+
+	/**
+	 * @see DATAMONGO-795
+	 */
+	@Test
+	@SuppressWarnings("rawtypes")
+	public void favorsCustomConverterForIndeterminedTargetType() {
+
+		CustomConversions conversions = new CustomConversions(Arrays.asList(DateTimeToStringConverter.INSTANCE));
+		assertThat(conversions.getCustomWriteTarget(DateTime.class, null), is(equalTo((Class) String.class)));
+	}
+
+	/**
+	 * @see DATAMONGO-881
+	 */
+	@Test
+	public void customConverterOverridesDefault() {
+
+		CustomConversions conversions = new CustomConversions(Arrays.asList(CustomDateTimeConverter.INSTANCE));
+		GenericConversionService conversionService = new DefaultConversionService();
+		conversions.registerConvertersIn(conversionService);
+
+		assertThat(conversionService.convert(new DateTime(), Date.class), is(new Date(0)));
+	}
+
+	/**
+	 * @see DATAMONGO-1001
+	 */
+	@Test
+	public void shouldSelectPropertCustomWriteTargetForCglibProxiedType() {
+
+		CustomConversions conversions = new CustomConversions(Arrays.asList(FormatToStringConverter.INSTANCE));
+		assertThat(conversions.getCustomWriteTarget(createProxyTypeFor(Format.class)), is(typeCompatibleWith(String.class)));
+	}
+
+	/**
+	 * @see DATAMONGO-1001
+	 */
+	@Test
+	public void shouldSelectPropertCustomReadTargetForCglibProxiedType() {
+
+		CustomConversions conversions = new CustomConversions(Arrays.asList(CustomObjectToStringConverter.INSTANCE));
+		assertThat(conversions.hasCustomReadTarget(createProxyTypeFor(Object.class), String.class), is(true));
+	}
+
+	/**
+	 * @see DATAMONGO-1131
+	 */
+	@Test
+	public void registersConvertersForJsr310() {
+
+		CustomConversions customConversions = new CustomConversions();
+
+		assertThat(customConversions.hasCustomWriteTarget(java.time.LocalDateTime.class), is(true));
+	}
+
+	/**
+	 * @see DATAMONGO-1131
+	 */
+	@Test
+	public void registersConvertersForThreeTenBackPort() {
+
+		CustomConversions customConversions = new CustomConversions();
+
+		assertThat(customConversions.hasCustomWriteTarget(LocalDateTime.class), is(true));
+	}
+
+	private static Class<?> createProxyTypeFor(Class<?> type) {
+
+		ProxyFactory factory = new ProxyFactory();
+		factory.setProxyTargetClass(true);
+		factory.setTargetClass(type);
+
+		return factory.getProxy().getClass();
+	}
+
 	enum FormatToStringConverter implements Converter<Format, String> {
 		INSTANCE;
 
@@ -186,5 +300,35 @@ public class CustomConversionsUnitTests {
 		public Integer convert(String source) {
 			return 0;
 		}
+	}
+
+	enum DateTimeToStringConverter implements Converter<DateTime, String> {
+		INSTANCE;
+
+		@Override
+		public String convert(DateTime source) {
+			return "";
+		}
+	}
+
+	enum CustomDateTimeConverter implements Converter<DateTime, Date> {
+
+		INSTANCE;
+
+		@Override
+		public Date convert(DateTime source) {
+			return new Date(0);
+		}
+	}
+
+	enum CustomObjectToStringConverter implements Converter<Object, String> {
+
+		INSTANCE;
+
+		@Override
+		public String convert(Object source) {
+			return source != null ? source.toString() : null;
+		}
+
 	}
 }

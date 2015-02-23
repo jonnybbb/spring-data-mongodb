@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2011 the original author or authors.
+ * Copyright 2010-2013 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,33 @@
  */
 package org.springframework.data.mongodb.core.query;
 
+import static org.hamcrest.CoreMatchers.*;
+import static org.junit.Assert.*;
 import static org.springframework.data.mongodb.core.query.Criteria.*;
+import static org.springframework.data.mongodb.core.query.Query.*;
+
+import java.util.Arrays;
 
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Sort.Direction;
 import org.springframework.data.mongodb.InvalidMongoDbApiUsageException;
+import org.springframework.data.mongodb.core.SpecialDoc;
 
+/**
+ * Unit tests for {@link Query}.
+ * 
+ * @author Thomas Risberg
+ * @author Oliver Gierke
+ * @author Patryk Wasik
+ * @author Thomas Darimont
+ */
 public class QueryTests {
+
+	@Rule public ExpectedException exception = ExpectedException.none();
 
 	@Test
 	public void testSimpleQuery() {
@@ -42,8 +62,7 @@ public class QueryTests {
 		try {
 			new Query(where("name").not().is("Thomas"));
 			Assert.fail("This should have caused an InvalidDocumentStoreApiUsageException");
-		} catch (InvalidMongoDbApiUsageException e) {
-		}
+		} catch (InvalidMongoDbApiUsageException e) {}
 	}
 
 	@Test
@@ -89,6 +108,21 @@ public class QueryTests {
 		Assert.assertEquals(expectedFields, q.getFieldsObject().toString());
 	}
 
+	/**
+	 * @see DATAMONGO-652
+	 */
+	@Test
+	public void testQueryWithFieldsElemMatchAndPositionalOperator() {
+
+		Query query = query(where("name").gte("M").lte("T").and("age").not().gt(22));
+		query.fields().elemMatch("products", where("name").is("milk")).position("comments", 2);
+
+		String expected = "{ \"name\" : { \"$gte\" : \"M\" , \"$lte\" : \"T\"} , \"age\" : { \"$not\" : { \"$gt\" : 22}}}";
+		assertThat(query.getQueryObject().toString(), is(expected));
+		String expectedFields = "{ \"products\" : { \"$elemMatch\" : { \"name\" : \"milk\"}} , \"comments.$\" : 2}";
+		assertThat(query.getFieldsObject().toString(), is(expectedFields));
+	}
+
 	@Test
 	public void testSimpleQueryWithChainedCriteria() {
 		Query q = new Query(where("name").is("Thomas").and("age").lt(80));
@@ -100,7 +134,7 @@ public class QueryTests {
 	public void testComplexQueryWithMultipleChainedCriteria() {
 		Query q = new Query(where("name").regex("^T.*").and("age").gt(20).lt(80).and("city")
 				.in("Stockholm", "London", "New York"));
-		String expected = "{ \"name\" : { \"$regex\" : \"^T.*\" , \"$options\" : \"\"} , \"age\" : { \"$gt\" : 20 , \"$lt\" : 80} , "
+		String expected = "{ \"name\" : { \"$regex\" : \"^T.*\"} , \"age\" : { \"$gt\" : 20 , \"$lt\" : 80} , "
 				+ "\"city\" : { \"$in\" : [ \"Stockholm\" , \"London\" , \"New York\"]}}";
 		Assert.assertEquals(expected, q.getQueryObject().toString());
 	}
@@ -134,14 +168,49 @@ public class QueryTests {
 	@Test
 	public void testQueryWithRegex() {
 		Query q = new Query(where("name").regex("b.*"));
-		String expected = "{ \"name\" : { \"$regex\" : \"b.*\" , \"$options\" : \"\"}}";
+		String expected = "{ \"name\" : { \"$regex\" : \"b.*\"}}";
 		Assert.assertEquals(expected, q.getQueryObject().toString());
 	}
 
 	@Test
-	public void testQueryWithRegexandOption() {
+	public void testQueryWithRegexAndOption() {
 		Query q = new Query(where("name").regex("b.*", "i"));
 		String expected = "{ \"name\" : { \"$regex\" : \"b.*\" , \"$options\" : \"i\"}}";
 		Assert.assertEquals(expected, q.getQueryObject().toString());
+	}
+
+	/**
+	 * @see DATAMONGO-538
+	 */
+	@Test
+	public void addsSortCorrectly() {
+
+		Query query = new Query().with(new Sort(Direction.DESC, "foo"));
+		assertThat(query.getSortObject().toString(), is("{ \"foo\" : -1}"));
+	}
+
+	@Test
+	public void rejectsOrderWithIgnoreCase() {
+
+		exception.expect(IllegalArgumentException.class);
+		exception.expectMessage("foo");
+
+		new Query().with(new Sort(new Sort.Order("foo").ignoreCase()));
+	}
+
+	/**
+	 * @see DATAMONGO-709
+	 */
+	@Test
+	@SuppressWarnings("unchecked")
+	public void shouldReturnClassHierarchyOfRestrictedTypes() {
+
+		Query query = new Query(where("name").is("foo")).restrict(SpecialDoc.class);
+		assertThat(
+				query.toString(),
+				is("Query: { \"name\" : \"foo\", \"_$RESTRICTED_TYPES\" : [ { $java : class org.springframework.data.mongodb.core.SpecialDoc } ] }, Fields: null, Sort: null"));
+		assertThat(query.getRestrictedTypes(), is(notNullValue()));
+		assertThat(query.getRestrictedTypes().size(), is(1));
+		assertThat(query.getRestrictedTypes(), hasItems(Arrays.asList(SpecialDoc.class).toArray(new Class<?>[0])));
 	}
 }

@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2011 by the original author(s).
+ * Copyright 2011-2015 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +18,7 @@ package org.springframework.data.mongodb.core.mapping;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Field;
 
+import org.springframework.data.mapping.model.FieldNamingStrategy;
 import org.springframework.data.mapping.model.SimpleTypeHolder;
 
 /**
@@ -30,6 +31,8 @@ public class CachingMongoPersistentProperty extends BasicMongoPersistentProperty
 	private Boolean isIdProperty;
 	private Boolean isAssociation;
 	private String fieldName;
+	private Boolean usePropertyAccess;
+	private Boolean isTransient;
 
 	/**
 	 * Creates a new {@link CachingMongoPersistentProperty}.
@@ -38,10 +41,11 @@ public class CachingMongoPersistentProperty extends BasicMongoPersistentProperty
 	 * @param propertyDescriptor
 	 * @param owner
 	 * @param simpleTypeHolder
+	 * @param fieldNamingStrategy
 	 */
 	public CachingMongoPersistentProperty(Field field, PropertyDescriptor propertyDescriptor,
-			MongoPersistentEntity<?> owner, SimpleTypeHolder simpleTypeHolder) {
-		super(field, propertyDescriptor, owner, simpleTypeHolder);
+			MongoPersistentEntity<?> owner, SimpleTypeHolder simpleTypeHolder, FieldNamingStrategy fieldNamingStrategy) {
+		super(field, propertyDescriptor, owner, simpleTypeHolder, fieldNamingStrategy);
 	}
 
 	/*
@@ -82,5 +86,33 @@ public class CachingMongoPersistentProperty extends BasicMongoPersistentProperty
 		}
 
 		return this.fieldName;
+	}
+
+	/* 
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mapping.model.AnnotationBasedPersistentProperty#usePropertyAccess()
+	 */
+	@Override
+	public boolean usePropertyAccess() {
+
+		if (this.usePropertyAccess == null) {
+			this.usePropertyAccess = super.usePropertyAccess();
+		}
+
+		return this.usePropertyAccess;
+	}
+
+	/* 
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mapping.model.AnnotationBasedPersistentProperty#isTransient()
+	 */
+	@Override
+	public boolean isTransient() {
+
+		if (this.isTransient == null) {
+			this.isTransient = super.isTransient();
+		}
+
+		return this.isTransient;
 	}
 }

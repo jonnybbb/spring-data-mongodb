@@ -11,14 +11,13 @@
 
 	<xsd:import namespace="http://www.springframework.org/schema/beans" />
 	<xsd:import namespace="http://www.springframework.org/schema/tool" />
-	<xsd:import namespace="http://www.springframework.org/schema/context"
-				schemaLocation="http://www.springframework.org/schema/context/spring-context.xsd" />
+	<xsd:import namespace="http://www.springframework.org/schema/context" />
 	<xsd:import namespace="http://www.springframework.org/schema/data/repository"
 				schemaLocation="http://www.springframework.org/schema/data/repository/spring-repository.xsd" />
 
 	<xsd:element name="mongo" type="mongoType">
 		<xsd:annotation>
-			<xsd:documentation source="org.springframework.data.mongodb.core.core.MongoFactoryBean"><![CDATA[
+			<xsd:documentation source="org.springframework.data.mongodb.core.MongoFactoryBean"><![CDATA[
 Defines a Mongo instance used for accessing MongoDB'.
 			]]></xsd:documentation>
 			<xsd:appinfo>
@@ -44,8 +43,9 @@ The name of the mongo definition (by default "mongoDbFactory").]]></xsd:document
 			</xsd:attribute>
 			<xsd:attribute name="mongo-ref" type="mongoRef" use="optional">
 				<xsd:annotation>
-					<xsd:documentation>
-						The reference to a Mongo. Will default to 'mongo'.
+					<xsd:documentation><![CDATA[
+The reference to a Mongo instance. If not configured a default com.mongodb.Mongo instance will be created.
+					]]>
 					</xsd:documentation>
 				</xsd:annotation>
 			</xsd:attribute>
@@ -103,15 +103,6 @@ The Mongo URI string.]]></xsd:documentation>
 		</xsd:complexType>
 	</xsd:element>
 
-	<xsd:complexType name="mongo-repository">
-		<xsd:complexContent>
-			<xsd:extension base="repository:repository">
-				<xsd:attributeGroup ref="mongo-repository-attributes"/>
-				<xsd:attributeGroup ref="repository:repository-attributes"/>
-			</xsd:extension>
-		</xsd:complexContent>
-	</xsd:complexType>
-
 	<xsd:attributeGroup name="mongo-repository-attributes">
 		<xsd:attribute name="mongo-template-ref" type="mongoTemplateRef" default="mongoTemplate">
 			<xsd:annotation>
@@ -134,9 +125,6 @@ The Mongo URI string.]]></xsd:documentation>
 		<xsd:complexType>
 			<xsd:complexContent>
 				<xsd:extension base="repository:repositories">
-					<xsd:sequence>
-						<xsd:element name="repository" minOccurs="0" maxOccurs="unbounded" type="mongo-repository"/>
-					</xsd:sequence>
 					<xsd:attributeGroup ref="mongo-repository-attributes"/>
 					<xsd:attributeGroup ref="repository:repository-attributes"/>
 				</xsd:extension>
@@ -209,7 +197,7 @@ The base package in which to scan for entities annotated with @Document
 			</xsd:attribute>
 			<xsd:attribute name="mongo-template-ref" type="mongoTemplateRef" use="optional">
 				<xsd:annotation>
-					<xsd:documentation source="org.springframework.data.mongodb.core.core.MongoTemplate">
+					<xsd:documentation source="org.springframework.data.mongodb.core.MongoTemplate">
 						The reference to a MongoTemplate. Will default to 'mongoTemplate'.
 					</xsd:documentation>
 				</xsd:annotation>
@@ -258,7 +246,7 @@ The name of the Mongo object that determines what server to monitor. (by default
 		<xsd:annotation>
 			<xsd:appinfo>
 				<tool:annotation kind="ref">
-					<tool:assignable-to type="org.springframework.data.mongodb.core.core.MongoTemplate"/>
+					<tool:assignable-to type="org.springframework.data.mongodb.core.MongoTemplate"/>
 				</tool:annotation>
 			</xsd:appinfo>
 		</xsd:annotation>
@@ -269,7 +257,7 @@ The name of the Mongo object that determines what server to monitor. (by default
 		<xsd:annotation>
 			<xsd:appinfo>
 				<tool:annotation kind="ref">
-					<tool:assignable-to type="org.springframework.data.mongodb.core.core.MongoFactoryBean"/>
+					<tool:assignable-to type="org.springframework.data.mongodb.core.MongoFactoryBean"/>
 				</tool:annotation>
 			</xsd:appinfo>
 		</xsd:annotation>
